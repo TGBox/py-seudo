@@ -172,8 +172,8 @@ class MainWindow(QMainWindow):
         file_row.setSpacing(12)
 
         self.esol_box = FileDropBox(
-            "1. ESOL-Abrechnungsdatei",
-            "ESOL / EDIFACT Dateien (*.esol *.txt *.edi *.org);;Alle Dateien (*.*)",
+            "1. ESOL-Abrechnungsdatei (keine Endungseinschränkung)",
+            "Alle Dateien (*);;Alle Dateien (*.*);;ESOL / EDIFACT Dateien (*.esol *.txt *.edi *.org)",
         )
         self.email_box = FileDropBox(
             "2. Rückmeldungsemail der Kasse",
@@ -318,13 +318,19 @@ class MainWindow(QMainWindow):
 
         try:
             if self.current_result.anonymized_esol:
-                esol_name = (
-                    f"{self.esol_box.file_path.stem}_anonymisiert.txt"
-                    if self.esol_box.file_path
-                    else "ESOL_anonymisiert.txt"
-                )
+                if self.esol_box.file_path and not self.esol_box.file_path.suffix:
+                    esol_name = f"{self.esol_box.file_path.name}_anonymisiert"
+                else:
+                    esol_name = (
+                        f"{self.esol_box.file_path.stem}_anonymisiert{self.esol_box.file_path.suffix}"
+                        if self.esol_box.file_path
+                        else "ESOL0001_anonymisiert"
+                    )
                 p_esol = dest / esol_name
-                p_esol.write_text(self.current_result.anonymized_esol, encoding="utf-8")
+                try:
+                    p_esol.write_text(self.current_result.anonymized_esol, encoding="latin-1")
+                except UnicodeEncodeError:
+                    p_esol.write_text(self.current_result.anonymized_esol, encoding="utf-8")
                 saved_files.append(p_esol.name)
 
             if self.current_result.anonymized_email:

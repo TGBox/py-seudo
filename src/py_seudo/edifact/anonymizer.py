@@ -68,12 +68,20 @@ class EsolAnonymizer:
 
             # FKT segment
             elif tag == "FKT":
-                ik_le = seg.get_element(1, 0).strip()
-                ik_ktr = seg.get_element(2, 0).strip()
-                if ik_le and re.match(r"^\d{9}$", ik_le):
-                    self.practice_iks.add(ik_le)
-                if ik_ktr and re.match(r"^\d{9}$", ik_ktr):
-                    self.kassen_iks.add(ik_ktr)
+                # Layout 1: FKT+01+IK_LE+IK_KTR...
+                # Layout 2: FKT+01++IK_LE+IK_KTR+IK_KTR+IK_LE (SLLA/SLGA:21)
+                ik_pos1 = seg.get_element(1, 0).strip()
+                ik_pos2 = seg.get_element(2, 0).strip()
+                ik_pos3 = seg.get_element(3, 0).strip()
+
+                if ik_pos1 and re.match(r"^\d{9}$", ik_pos1):
+                    self.practice_iks.add(ik_pos1)
+                    if ik_pos2 and re.match(r"^\d{9}$", ik_pos2):
+                        self.kassen_iks.add(ik_pos2)
+                elif not ik_pos1 and ik_pos2 and re.match(r"^\d{9}$", ik_pos2):
+                    self.practice_iks.add(ik_pos2)
+                    if ik_pos3 and re.match(r"^\d{9}$", ik_pos3):
+                        self.kassen_iks.add(ik_pos3)
 
         for p_ik in self.practice_iks:
             if p_ik in self.kassen_iks:
@@ -169,18 +177,39 @@ class EsolAnonymizer:
 
             # 2. FKT Segment
             elif tag == "FKT":
-                ik_le = seg.get_element(1, 0)
-                if ik_le:
-                    pseudo_ik = self._get_or_create_mapping(
-                        ik_le, ReplacementCategory.PRACTICE_IK, "Praxis-IK (FKT Leistungserbringer)"
+                for elem_idx in range(len(seg.elements)):
+                    val = seg.get_element(elem_idx, 0).strip()
+                    if val in self.practice_iks:
+                        pseudo_ik = self._get_or_create_mapping(
+                            val, ReplacementCategory.PRACTICE_IK, "Praxis-IK (FKT)"
+                        )
+                        seg.set_element(elem_idx, pseudo_ik, 0)
+
+            # 2b. NAM Segment (Praxisname / Kontaktdaten in SLGA)
+            elif tag == "NAM":
+                p_name = seg.get_element(0, 0).strip()
+                if p_name:
+                    pseudo_name = "Praxis fuer Therapie Musterpraxis"
+                    self.detected_entities[p_name] = MappingEntry(
+                        original=p_name,
+                        pseudonym=pseudo_name,
+                        category=ReplacementCategory.PRACTICE_IK,
+                        count=1,
+                        description="Praxisname (NAM)",
                     )
-                    seg.set_element(1, pseudo_ik, 0)
-                ik_rs = seg.get_element(3, 0)
-                if ik_rs and (ik_rs in self.practice_iks or ik_rs == ik_le):
-                    pseudo_rs = self._get_or_create_mapping(
-                        ik_rs, ReplacementCategory.PRACTICE_IK, "Praxis-IK (FKT Rechnungssteller)"
+                    seg.set_element(0, pseudo_name, 0)
+                # Element 3: Practice contact / email
+                p_contact = seg.get_element(3, 0).strip()
+                if p_contact:
+                    pseudo_contact = "kontakt@beispiel.invalid"
+                    self.detected_entities[p_contact] = MappingEntry(
+                        original=p_contact,
+                        pseudonym=pseudo_contact,
+                        category=ReplacementCategory.CONTACT_INFO,
+                        count=1,
+                        description="Praxis E-Mail / Kontakt (NAM)",
                     )
-                    seg.set_element(3, pseudo_rs, 0)
+                    seg.set_element(3, pseudo_contact, 0)
 
             # 3. REC Segment
             elif tag == "REC":
@@ -199,12 +228,18 @@ class EsolAnonymizer:
 
             # 4. INV Segment
             elif tag == "INV":
-                inv_nr = seg.get_element(0, 0)
-                if inv_nr:
-                    pseudo_inv = self._get_or_create_mapping(
-                        inv_nr, ReplacementCategory.INVOICE_NUMBER, "Rechnungsnummer (INV)"
-                    )
-                    seg.set_element(0, pseudo_inv, 0)
+                inv_val = seg.get_element(0, 0).strip()
+                if inv_val:
+                    if re.match(r"^[A-Za-z]\d{7,10}$", inv_val):
+                        pseudo_kvnr = self._get_or_create_mapping(
+                            inv_val, ReplacementCategory.KVNR, "Versichertennummer (INV)"
+                        )
+                        seg.set_element(0, pseudo_kvnr, 0)
+                    else:
+                        pseudo_inv = self._get_or_create_mapping(
+                            inv_val, ReplacementCategory.INVOICE_NUMBER, "Rechnungsnummer (INV)"
+                        )
+                        seg.set_element(0, pseudo_inv, 0)
 
             # 5. NAD Segment: Name and Address
             elif tag == "NAD":
@@ -401,6 +436,71 @@ class EsolAnonymizer:
                 elif qual in ("KTR", "KK"):
                     last_patient_context = False
 
+                else:
+                    # SLLA:21 / § 302 Heilmittel without qualifier: NAD+Nachname+Vorname+Geburtsdatum
+                    nachname = seg.get_element(0, 0).strip()
+                    vorname = seg.get_element(1, 0).strip()
+                    geburtsdatum = seg.get_element(2, 0).strip()
+
+                    if nachname and vorname and re.match(r"^\d{8}$", geburtsdatum):
+                        self._patient_counter += 1
+                        p_idx = self._patient_counter
+                        p_surname = f"Mustermann_{p_idx}"
+                        p_forename = f"Max_{p_idx}"
+                        pseudo_dob = f"{geburtsdatum[:4]}0615"
+
+                        self.detected_entities[nachname] = MappingEntry(
+                            original=nachname,
+                            pseudonym=p_surname,
+                            category=ReplacementCategory.PATIENT_NAME,
+                            count=1,
+                            description="Patient Nachname (NAD)",
+                        )
+                        self.detected_entities[vorname] = MappingEntry(
+                            original=vorname,
+                            pseudonym=p_forename,
+                            category=ReplacementCategory.PATIENT_NAME,
+                            count=1,
+                            description="Patient Vorname (NAD)",
+                        )
+                        full_1 = f"{vorname} {nachname}"
+                        full_2 = f"{nachname}, {vorname}"
+                        self.detected_entities[full_1] = MappingEntry(
+                            original=full_1,
+                            pseudonym=f"{p_forename} {p_surname}",
+                            category=ReplacementCategory.PATIENT_NAME,
+                            count=1,
+                            description="Patient Vollname",
+                        )
+                        self.detected_entities[full_2] = MappingEntry(
+                            original=full_2,
+                            pseudonym=f"{p_surname}, {p_forename}",
+                            category=ReplacementCategory.PATIENT_NAME,
+                            count=1,
+                            description="Patient Vollname (Nachname, Vorname)",
+                        )
+
+                        self.detected_entities[geburtsdatum] = MappingEntry(
+                            original=geburtsdatum,
+                            pseudonym=pseudo_dob,
+                            category=ReplacementCategory.BIRTHDATE,
+                            count=1,
+                            description="Geburtsdatum (CCYYMMDD)",
+                        )
+                        de_date = f"{geburtsdatum[6:8]}.{geburtsdatum[4:6]}.{geburtsdatum[:4]}"
+                        de_pseudo = f"15.06.{geburtsdatum[:4]}"
+                        self.detected_entities[de_date] = MappingEntry(
+                            original=de_date,
+                            pseudonym=de_pseudo,
+                            category=ReplacementCategory.BIRTHDATE,
+                            count=1,
+                            description="Geburtsdatum (DD.MM.YYYY)",
+                        )
+
+                        seg.set_element(0, p_surname, 0)
+                        seg.set_element(1, p_forename, 0)
+                        seg.set_element(2, pseudo_dob, 0)
+
             # 6. DTM Segment (Date)
             elif tag == "DTM":
                 qual = seg.get_element(0, 0)
@@ -447,6 +547,21 @@ class EsolAnonymizer:
                         lanr, ReplacementCategory.DOCTOR_LANR, "Arztnummer (LANR in BES)"
                     )
                     seg.set_element(1, pseudo_lanr, 0)
+
+            # 7b. ZHE Segment (LANR und BSNR in SLLA:21)
+            elif tag == "ZHE":
+                lanr = seg.get_element(0, 0).strip()
+                if lanr and re.match(r"^\d{9}$", lanr):
+                    pseudo_lanr = self._get_or_create_mapping(
+                        lanr, ReplacementCategory.DOCTOR_LANR, "Arztnummer (LANR in ZHE)"
+                    )
+                    seg.set_element(0, pseudo_lanr, 0)
+                bsnr = seg.get_element(1, 0).strip()
+                if bsnr and re.match(r"^\d{9}$", bsnr):
+                    pseudo_bsnr = self._get_or_create_mapping(
+                        bsnr, ReplacementCategory.DOCTOR_BSNR, "Betriebsstaettennummer (BSNR in ZHE)"
+                    )
+                    seg.set_element(1, pseudo_bsnr, 0)
 
             # 8. EHE Segment (Rezept / Verordnungsnummer)
             elif tag == "EHE":

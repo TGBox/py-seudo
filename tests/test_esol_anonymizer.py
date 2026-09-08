@@ -102,3 +102,33 @@ def test_specified_practice_ik_override():
 
     assert "555666777" not in out_text
     assert "999000001" in out_text
+
+
+def test_slla21_heilmittel_file():
+    from pathlib import Path
+    esol_file = Path("testdata/in/ESOL0001")
+    if not esol_file.exists():
+        pytest.skip("testdata/in/ESOL0001 not present")
+
+    text = esol_file.read_text(encoding="latin-1")
+    anon = EsolAnonymizer(text)
+    out_text, mappings = anon.anonymize()
+
+    # Practice IK pseudonymized
+    assert "480512931" not in out_text
+    # Patient name pseudonymized
+    assert "Appenzeller" not in out_text
+    assert "Abel" not in out_text
+    # Birthdate year preserved (2019), month/day standardized to 0615
+    assert "20190615" in out_text
+    assert "20190118" not in out_text
+    # Doctor LANR and BSNR in ZHE pseudonymized
+    assert "242325300" not in out_text
+    assert "963752734" not in out_text
+    # Kassen-IKs preserved
+    assert "660510336" in out_text
+    assert "104080005" in out_text
+    # Position numbers and diagnosis preserved
+    assert "54103" in out_text
+    assert "R29.2" in out_text
+
