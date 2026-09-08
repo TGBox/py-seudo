@@ -1,6 +1,6 @@
 [project]
 name = "py-seudo"
-version = "0.4.0"
+version = "1.0.0"
 description = "DSGVO-konforme Pseudonymisierung von ESOL-Abrechnungsdateien und Rueckmeldungsemails."
 readme = "README.md"
 requires-python = ">=3.11"
