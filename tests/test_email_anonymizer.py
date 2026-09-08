@@ -80,3 +80,50 @@ def test_empty_email_handling():
     out_text, mappings = anon.anonymize()
     assert out_text == ""
     assert mappings == []
+
+
+def test_sample_email_encoding_and_umlauts_preserved():
+    """Stellt sicher, dass bei der Beispiel-E-Mail keine Sonderzeichen zerstört werden."""
+    from py_seudo.samples import SAMPLE_EMAIL
+
+    anon = EmailAnonymizer(SAMPLE_EMAIL)
+    out_text, mappings = anon.anonymize()
+
+    # Kein vorangestelltes Content-Transfer-Encoding
+    assert not out_text.startswith("Content-Transfer-Encoding:")
+
+    # Umlaute und Sonderzeichen müssen sauber erhalten bleiben
+    assert "Können Sie mir hier weiterhelfen?" in out_text
+    assert "Liebe Grüße," in out_text
+    assert "\ufffd" not in out_text
+
+    # Namen stilgetreu ersetzt
+    assert "Hallo Frau Schmidt," in out_text
+    assert "Ulla Winkler" in out_text
+    assert "Simone Sonnenschein" not in out_text
+    assert "Frau Meier" not in out_text
+    assert "Sachbearbeiter" not in out_text
+
+
+def test_rfc822_email_with_umlauts_preserved():
+    """Echte RFC-822 E-Mail mit Umlauten im Body darf keine Zeichenfehler erzeugen."""
+    raw = (
+        "From: kasse@tk.de\n"
+        "To: praxis@test.de\n"
+        "Subject: Fehlerprüfung\n"
+        "Content-Type: text/plain; charset=\"utf-8\"\n"
+        "\n"
+        "Sehr geehrte Frau Müller,\n"
+        "Können Sie bitte die Abrechnung prüfen?\n"
+        "Liebe Grüße,\n"
+        "Simone Sonnenschein\n"
+    )
+    anon = EmailAnonymizer(raw)
+    out_text, _ = anon.anonymize()
+
+    assert "\ufffd" not in out_text
+    assert "Können Sie bitte die Abrechnung prüfen?" in out_text
+    assert "Liebe Grüße," in out_text
+    assert "Sehr geehrte Frau Schmidt," in out_text
+    assert "Ulla Winkler" in out_text
+

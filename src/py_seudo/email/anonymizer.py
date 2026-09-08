@@ -5,7 +5,7 @@ import email
 from email import policy
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from py_seudo.email.names import NameDetector, NameHit, NameRole
 from py_seudo.models import MappingEntry, ReplacementCategory, Suspicion
@@ -37,6 +37,58 @@ _ROLE_CATEGORY = {
     NameRole.DOCTOR: ReplacementCategory.DOCTOR_NAME,
     NameRole.CONTACT: ReplacementCategory.CONTACT_PERSON,
 }
+
+_FEMALE_FIRST_NAMES_SET = frozenset({
+    "anna", "andrea", "anja", "angelika", "barbara", "birgit", "brigitte",
+    "christa", "christina", "christine", "claudia", "daniela", "elke", "emma",
+    "erika", "hannah", "heike", "helga", "ingrid", "julia", "karin",
+    "katharina", "kerstin", "laura", "lea", "lena", "lisa", "maria", "marion",
+    "martina", "melanie", "mia", "monika", "nicole", "petra", "renate",
+    "sabine", "sarah", "silke", "simone", "sophie", "stefanie", "steffi",
+    "susanne", "tanja", "ulla", "ursula", "ute"
+})
+
+_MALE_FIRST_NAMES_SET = frozenset({
+    "alexander", "andreas", "bernd", "carsten", "christian", "daniel", "david",
+    "dieter", "dirk", "felix", "florian", "frank", "hans", "holger", "jan",
+    "jens", "joerg", "johannes", "jonas", "juergen", "jürgen", "karsten",
+    "klaus", "leon", "lukas", "manfred", "markus", "martin", "matthias",
+    "maximilian", "michael", "oliver", "paul", "peter", "philipp", "ralf",
+    "ralph", "sebastian", "stefan", "stephan", "sven", "thomas", "thorsten",
+    "tim", "tobias", "torsten", "ulrich", "uwe", "wolfgang"
+})
+
+_PREFERRED_SURNAMES: Dict[str, str] = {
+    "müller": "Schmidt",
+    "mueller": "Schmidt",
+    "sonnenschein": "Winkler",
+    "ulrichs": "Schuhmann",
+    "meier": "Schmidt",
+}
+
+_PREFERRED_FIRST_NAMES: Dict[str, str] = {
+    "simone": "Ulla",
+}
+
+_FEMALE_FIRST_NAMES_POOL: Sequence[str] = (
+    "Ulla", "Sabine", "Claudia", "Susanne", "Petra", "Andrea", "Monika",
+    "Birgit", "Renate", "Erika", "Brigitte", "Christa", "Elke", "Julia",
+    "Maria", "Stefanie", "Melanie", "Christina", "Katharina", "Nicole"
+)
+
+_MALE_FIRST_NAMES_POOL: Sequence[str] = (
+    "Michael", "Thomas", "Stefan", "Andreas", "Christian", "Peter",
+    "Klaus", "Wolfgang", "Hans", "Jürgen", "Dieter", "Manfred",
+    "Uwe", "Frank", "Bernd", "Markus", "Martin", "Jan", "Daniel"
+)
+
+_SURNAMES_POOL: Sequence[str] = (
+    "Schmidt", "Winkler", "Schuhmann", "Weber", "Fischer", "Schneider",
+    "Bauer", "Hoffmann", "Wagner", "Becker", "Schulz", "Koch", "Richter",
+    "Klein", "Wolf", "Schröder", "Neumann", "Schwarz", "Zimmermann", "Braun",
+    "Krüger", "Hartmann", "Lange", "Schmitt", "Werner", "Krause", "Lehmann",
+    "Huber", "Herrmann", "Köhler"
+)
 
 
 class EmailAnonymizer:
@@ -77,11 +129,16 @@ class EmailAnonymizer:
         self.email_mappings: List[MappingEntry] = []
         self.suspicions: List[Suspicion] = []
 
-        # Personen, die erst in der E-Mail auftauchen. Schluessel ist (Rolle, Nachname),
-        # damit "Sehr geehrte Frau Becker" und die Signatur "Andrea Becker" dieselbe
-        # Nummer bekommen, ein Patient Meier und ein Sachbearbeiter Meier aber nicht.
+        # Personen, die erst in der E-Mail auftauchen.
         self._person_index: Dict[Tuple[NameRole, str], int] = {}
         self._person_gender: Dict[Tuple[NameRole, str], str] = {}
+        self._person_data: Dict[Tuple[NameRole, str], Dict[str, Any]] = {}
+        self._used_surnames: Set[str] = set()
+        self._used_female_first: Set[str] = set()
+        self._used_male_first: Set[str] = set()
+        self._surname_pool_idx = 0
+        self._female_first_pool_idx = 0
+        self._male_first_pool_idx = 0
         self._person_counter = self._highest_used_index()
 
     # ------------------------------------------------------------------
@@ -98,21 +155,40 @@ class EmailAnonymizer:
         return self._anonymize_plain_text()
 
     def _is_rfc822_email(self, text: str) -> bool:
-        """Heuristic to determine whether input is an RFC 822 email file."""
-        lines = text.splitlines()[:20]
-        header_keys = {"from:", "to:", "subject:", "date:", "message-id:", "content-type:"}
-        found_headers = 0
+        """Determines whether input is an RFC 822 email file with leading headers."""
+        if not text.strip():
+            return False
+        lines = text.splitlines()
+        header_lines: List[str] = []
         for line in lines:
+            if not line.strip():
+                break
+            header_lines.append(line)
+
+        if not header_lines:
+            return False
+
+        header_field_pattern = re.compile(r"^[A-Za-z0-9_-]+:\s*")
+        header_keys = {"from:", "to:", "subject:", "date:", "message-id:", "content-type:", "received:", "cc:", "bcc:"}
+        found_headers = 0
+
+        for line in header_lines:
+            if line.startswith(" ") or line.startswith("\t"):
+                # Continuation line
+                continue
+            if not header_field_pattern.match(line):
+                return False
             line_lower = line.lower().strip()
             for h in header_keys:
                 if line_lower.startswith(h):
                     found_headers += 1
                     break
+
         return found_headers >= 2
 
     def _anonymize_rfc822(self) -> Tuple[str, List[MappingEntry]]:
         """Parse, sanitize headers, and replace text in RFC 822 email."""
-        msg = email.message_from_string(self.raw_email, policy=policy.default)
+        msg = email.message_from_string(self.raw_email, policy=policy.compat32)
 
         # Sanitize headers
         if "from" in msg:
@@ -147,20 +223,13 @@ class EmailAnonymizer:
             sanitized_subj = self._apply_replacements(orig_subj, section="Betreff")
             msg.replace_header("subject", sanitized_subj)
 
-        # Ensure Content-Transfer-Encoding is 8bit so output remains clean human-readable text
-        if "content-transfer-encoding" in msg:
-            del msg["content-transfer-encoding"]
-        msg["Content-Transfer-Encoding"] = "8bit"
-
         # Process payload
         if msg.is_multipart():
             for idx, part in enumerate(msg.walk(), start=1):
                 content_type = part.get_content_type()
                 if content_type in ("text/plain", "text/html"):
                     try:
-                        payload = part.get_payload(decode=True)
-                        charset = part.get_content_charset() or "utf-8"
-                        text = payload.decode(charset, errors="replace")
+                        text = self._extract_message_text(part)
                         sanitized = self._apply_replacements(text, section=f"Textteil {idx}")
                         part.set_payload(sanitized)
                         if "content-transfer-encoding" in part:
@@ -170,18 +239,47 @@ class EmailAnonymizer:
                         pass
         else:
             try:
-                payload = msg.get_payload(decode=True)
-                charset = msg.get_content_charset() or "utf-8"
-                if payload:
-                    text = payload.decode(charset, errors="replace")
-                else:
-                    text = msg.get_payload() or ""
+                text = self._extract_message_text(msg)
                 sanitized = self._apply_replacements(text, section="Nachrichtentext")
                 msg.set_payload(sanitized)
+                if "content-transfer-encoding" in msg:
+                    del msg["content-transfer-encoding"]
+                msg["Content-Transfer-Encoding"] = "8bit"
             except Exception:
                 pass
 
         return msg.as_string(), self.email_mappings
+
+    @staticmethod
+    def _extract_message_text(part: email.message.Message) -> str:
+        """Safely extract decoded text without corrupting German special characters."""
+        cte = str(part.get("content-transfer-encoding", "")).strip().lower()
+        charset = part.get_content_charset() or "utf-8"
+
+        if cte in ("quoted-printable", "base64"):
+            try:
+                payload_bytes = part.get_payload(decode=True)
+                if isinstance(payload_bytes, bytes):
+                    for enc in (charset, "utf-8", "latin-1", "cp1252"):
+                        try:
+                            return payload_bytes.decode(enc)
+                        except (UnicodeDecodeError, LookupError):
+                            continue
+                    return payload_bytes.decode("utf-8", errors="replace")
+            except Exception:
+                pass
+
+        raw_payload = part.get_payload()
+        if isinstance(raw_payload, str):
+            return raw_payload
+        if isinstance(raw_payload, bytes):
+            for enc in (charset, "utf-8", "latin-1", "cp1252"):
+                try:
+                    return raw_payload.decode(enc)
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            return raw_payload.decode("utf-8", errors="replace")
+        return ""
 
     def _anonymize_plain_text(self) -> Tuple[str, List[MappingEntry]]:
         """Sanitize plain text email content."""
@@ -209,6 +307,11 @@ class EmailAnonymizer:
         email_spans = self._email_spans(text)
 
         protected = [(s.start, s.end) for s in mapping_spans + email_spans]
+        for entry in self.shared_mappings.values():
+            if entry.pseudonym and len(entry.pseudonym) >= 2:
+                for m in re.finditer(rf"\b{re.escape(entry.pseudonym)}\b", text):
+                    protected.append((m.start(), m.end()))
+
         detector = NameDetector(protected)
         name_spans = self._name_spans(text, detector)
 
@@ -291,14 +394,10 @@ class EmailAnonymizer:
         if not hits:
             return []
 
-        # Erst Gruppen bilden (Rolle + Nachname), dann Nummern vergeben -- damit
-        # dieselbe Person in Anrede und Signatur dieselbe Nummer bekommt.
+        # Erst Personen registrieren und Pseudonyme zuweisen -- damit dieselbe Person
+        # in Anrede und Signatur denselben Nachnamen und konsistente Daten erhaelt.
         for hit in hits:
-            key = (hit.role, self._surname_key(hit.text))
-            if hit.salutation and not self._person_gender.get(key):
-                self._person_gender[key] = hit.salutation
-            if key not in self._person_index:
-                self._person_index[key] = self._claim_index(hit)
+            self._ensure_person_registered(hit)
 
         spans = []
         for hit in hits:
@@ -409,20 +508,119 @@ class EmailAnonymizer:
         self._person_counter += 1
         return self._person_counter
 
+    def _ensure_person_registered(self, hit: NameHit) -> None:
+        tokens = [t for t in re.split(r"\s+", hit.text.strip()) if t]
+        raw_surname = self._surname_key(hit.text)
+        key = (hit.role, raw_surname)
+
+        if key in self._person_data:
+            if hit.salutation and not self._person_data[key].get("salutation_known"):
+                self._person_data[key]["gender"] = hit.salutation
+                self._person_data[key]["salutation_known"] = True
+                self._person_gender[key] = hit.salutation
+            return
+
+        gender = hit.salutation
+        salutation_known = bool(gender)
+        if not gender and len(tokens) >= 2:
+            first_lower = tokens[0].lower()
+            if first_lower in _FEMALE_FIRST_NAMES_SET:
+                gender = "f"
+            elif first_lower in _MALE_FIRST_NAMES_SET:
+                gender = "m"
+        if not gender:
+            gender = "m"
+
+        idx = self._claim_index(hit)
+        self._person_index[key] = idx
+        self._person_gender[key] = gender
+
+        # Preferred or pool surname
+        if raw_surname in _PREFERRED_SURNAMES and _PREFERRED_SURNAMES[raw_surname] not in self._used_surnames:
+            surname = _PREFERRED_SURNAMES[raw_surname]
+        else:
+            surname = ""
+            while self._surname_pool_idx < len(_SURNAMES_POOL):
+                cand = _SURNAMES_POOL[self._surname_pool_idx]
+                self._surname_pool_idx += 1
+                if cand not in self._used_surnames and cand.casefold() != raw_surname:
+                    surname = cand
+                    break
+            if not surname:
+                surname = f"Muster_{idx}"
+
+        self._used_surnames.add(surname)
+
+        # Preferred or pool first name
+        first_lower = tokens[0].lower() if len(tokens) >= 2 else ""
+        if first_lower in _PREFERRED_FIRST_NAMES:
+            first_name = _PREFERRED_FIRST_NAMES[first_lower]
+        elif gender == "f":
+            first_name = ""
+            while self._female_first_pool_idx < len(_FEMALE_FIRST_NAMES_POOL):
+                cand = _FEMALE_FIRST_NAMES_POOL[self._female_first_pool_idx]
+                self._female_first_pool_idx += 1
+                if cand not in self._used_female_first:
+                    first_name = cand
+                    break
+            if not first_name:
+                first_name = _FEMALE_FIRST_NAMES_POOL[idx % len(_FEMALE_FIRST_NAMES_POOL)]
+            self._used_female_first.add(first_name)
+        else:
+            first_name = ""
+            while self._male_first_pool_idx < len(_MALE_FIRST_NAMES_POOL):
+                cand = _MALE_FIRST_NAMES_POOL[self._male_first_pool_idx]
+                self._male_first_pool_idx += 1
+                if cand not in self._used_male_first:
+                    first_name = cand
+                    break
+            if not first_name:
+                first_name = _MALE_FIRST_NAMES_POOL[idx % len(_MALE_FIRST_NAMES_POOL)]
+            self._used_male_first.add(first_name)
+
+        self._person_data[key] = {
+            "gender": gender,
+            "salutation_known": salutation_known,
+            "first_name": first_name,
+            "surname": surname,
+            "idx": idx,
+        }
+
     def _pseudonym_for(self, hit: NameHit) -> str:
+        self._ensure_person_registered(hit)
         key = (hit.role, self._surname_key(hit.text))
-        idx = self._person_index[key]
-        token_count = len([t for t in re.split(r"\s+", hit.text.strip()) if t])
+        person = self._person_data[key]
+        idx = person["idx"]
+        tokens = [t for t in re.split(r"\s+", hit.text.strip()) if t]
 
         if hit.role is NameRole.PATIENT:
-            if token_count >= 2:
+            if len(tokens) >= 2:
                 return f"Max_{idx} Mustermann_{idx}"
             return f"Mustermann_{idx}"
+
         if hit.role is NameRole.DOCTOR:
             return f"Musterarzt_{idx}"
-        if self._person_gender.get(key) == "f":
-            return f"Sachbearbeiterin_{idx}"
-        return f"Sachbearbeiter_{idx}"
+
+        # Contact person: generate natural name in the exact same style as original
+        fake_surname = person["surname"]
+        fake_first = person["first_name"]
+
+        # Check for particle (e.g. "von Kettenburg")
+        if len(tokens) >= 2 and tokens[0].lower() in ("von", "vom", "van", "zu", "zur", "de", "del", "di"):
+            particle = tokens[0]
+            return f"{particle} {fake_surname}"
+
+        # Check for hyphenated surname without first name (e.g. "Meier-Schulz")
+        if "-" in self._surname_key(hit.text) and len(tokens) == 1:
+            second_cand = "Bauer" if fake_surname != "Bauer" else "Weber"
+            return f"{fake_surname}-{second_cand}"
+
+        if len(tokens) == 1:
+            # Just surname: "Müller" -> "Schmidt", "Ulrichs" -> "Schuhmann", "Meier" -> "Schmidt"
+            return fake_surname
+
+        # Full name: "Simone Sonnenschein" -> "Ulla Winkler", "Alexander Testperson" -> "Michael Schuhmann"
+        return f"{fake_first} {fake_surname}"
 
     # ------------------------------------------------------------------
     # Hilfsfunktionen

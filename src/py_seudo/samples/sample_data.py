@@ -22,7 +22,16 @@ ENF+21201+10+45.50'
 UNT+13+00002'
 UNZ+2+ESOL0001'"""
 
-SAMPLE_EMAIL = """From: Techniker Krankenkasse Abrechnungspruefung <abrechnung-fehler@tk.de>
+SAMPLE_EMAIL = """Hallo Frau Meier,
+
+ich habe wieder eine Ablehnung von der Kasse bekommen. Können Sie mir hier weiterhelfen?
+
+Liebe Grüße,
+Simone Sonnenschein
+
+
+
+From: Techniker Krankenkasse Abrechnungspruefung <abrechnung-fehler@tk.de>
 To: Therapiezentrum Sonnenschein <abrechnung@sonnenschein-therapie.de>
 Date: Thu, 11 Apr 2024 09:15:22 +0200
 Subject: Ablehnung / Fehlerprotokoll Abrechnungsdatei ESOL0001 (IK 123456789)
@@ -43,6 +52,7 @@ Fehlerdetails zu Belegnummer 9876543210 (Rechnung RE202400123):
 Bitte korrigieren Sie den Datensatz in Ihrer Praxissoftware und uebermitteln Sie eine Neulieferung.
 
 Mit freundlichen Gruessen
+Alexander Testperson
 Abrechnungsteam TK
 Tel: 040 / 460661000
 Fax: 040 / 460661009

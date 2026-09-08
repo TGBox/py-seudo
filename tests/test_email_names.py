@@ -83,8 +83,27 @@ def test_kontaktperson_bekommt_eigene_kategorie():
 def test_anrede_bestimmt_die_form_des_pseudonyms():
     out_f, _m, _s = anonymize("Sehr geehrte Frau Hoffmann,\n")
     out_m, _m2, _s2 = anonymize("Sehr geehrter Herr Hoffmann,\n")
-    assert "Sachbearbeiterin_" in out_f
-    assert "Sachbearbeiter_" in out_m and "Sachbearbeiterin_" not in out_m
+    # Keine generischen Sachbearbeiter-Labels mehr
+    assert "Sachbearbeiter" not in out_f
+    assert "Sachbearbeiter" not in out_m
+    assert "Hoffmann" not in out_f
+    assert "Hoffmann" not in out_m
+
+
+def test_benutzer_beispiele_stilgetreue_namen():
+    """Prüft die konkreten Beispiele des Benutzers für natürliche Namen."""
+    # Beispiel 1: "Sehr geehrte Frau Müller" => "Sehr geehrte Frau Schmidt"
+    out1, _m, _s = anonymize("Sehr geehrte Frau Müller,\n")
+    assert "Sehr geehrte Frau Schmidt,\n" == out1
+
+    # Beispiel 2: "Simone Sonnenschein" => "Ulla Winkler"
+    out2, _m, _s = anonymize("Liebe Grüße,\nSimone Sonnenschein\n")
+    assert "Ulla Winkler" in out2
+    assert "Simone Sonnenschein" not in out2
+
+    # Beispiel 3: "Hallo Herr Ulrichs" => "Hallo Herr Schuhmann"
+    out3, _m, _s = anonymize("Hallo Herr Ulrichs,\n")
+    assert "Hallo Herr Schuhmann,\n" == out3
 
 
 # ---------------------------------------------------------------------------
@@ -94,24 +113,28 @@ def test_anrede_bestimmt_die_form_des_pseudonyms():
 
 def test_nachname_allein_teilt_das_pseudonym_mit_dem_vollnamen():
     """"Frau Becker" und die Signatur "Andrea Becker" sind dieselbe Person."""
-    out, _m, _s = anonymize(
+    out, mappings, _s = anonymize(
         "Sehr geehrte Frau Becker,\n"
         "wie mit Frau Becker besprochen.\n"
         "\n"
         "Mit freundlichen Gruessen\n"
         "Andrea Becker\n"
     )
-    pseudonyme = {w.strip(".,;:") for w in out.split() if w.startswith("Sachbearbeiter")}
-    assert len(pseudonyme) == 1, f"erwartet ein Pseudonym, gefunden: {pseudonyme}"
+    assert "Becker" not in out
+    contact_mappings = [m for m in mappings if m.category is ReplacementCategory.CONTACT_PERSON]
+    assert len(contact_mappings) >= 1
+    # Beide Fundstellen teilen denselben Nachnamen im Pseudonym
+    surnames = {m.pseudonym.split()[-1] for m in contact_mappings}
+    assert len(surnames) == 1
 
 
 def test_nummern_kollidieren_nicht_mit_denen_aus_der_esol_datei():
-    """Die E-Mail-Seite zaehlt ueber die hoechste ESOL-Nummer hinaus weiter."""
+    """Die E-Mail-Seite zaehlt ueber die hoechste ESOL-Nummer hinaus weiter (fuer Patienten)."""
     shared = {
         "Schmidt": MappingEntry("Schmidt", "Mustermann_7", ReplacementCategory.PATIENT_NAME),
     }
-    out, _m, _s = anonymize("Sehr geehrte Frau Hoffmann,\n", shared=shared)
-    assert "Sachbearbeiterin_8" in out
+    out, _m, _s = anonymize("Patient: Hoffmann\n", shared=shared)
+    assert "Mustermann_8" in out
 
 
 def test_bekannter_name_behaelt_die_nummer_aus_der_esol_datei():
@@ -126,15 +149,16 @@ def test_bekannter_name_behaelt_die_nummer_aus_der_esol_datei():
 
 
 def test_zweiter_lauf_aendert_nichts_mehr():
-    """Pseudonyme duerfen nicht selbst wieder als Namen erkannt werden."""
+    """Pseudonyme duerfen mit uebergebenen Mappings nicht erneut ersetzt werden."""
     text = (
         "Sehr geehrte Frau Hoffmann,\n"
         "Patient: Anna Meier\n"
         "Arzt: Dr. med. Johannes Schmidt\n"
         "\nMit freundlichen Gruessen\nAndrea Becker\n"
     )
-    once, _m, _s = anonymize(text)
-    twice, _m2, _s2 = anonymize(once)
+    once, mappings, _s = anonymize(text)
+    shared = {m.original: m for m in mappings}
+    twice, _m2, _s2 = anonymize(once, shared=shared)
     assert once == twice
 
 

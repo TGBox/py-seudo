@@ -1,11 +1,11 @@
 [project]
 name = "py-seudo"
-version = "0.1.0"
-description = "DSGVO-konforme Pseudonymisierung von ESOL-Abrechnungsdateien und Rueckmeldungsemails"
+version = "0.4.0"
+description = "DSGVO-konforme Pseudonymisierung von ESOL-Abrechnungsdateien und Rueckmeldungsemails."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-    { name = "py-seudo Team" }
+    { name = "Daniel Rösch" }
 ]
 dependencies = [
     "pyside6>=6.6.0",
