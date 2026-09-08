@@ -1,6 +1,7 @@
 """Side-by-side synchronized comparison widget with diff highlighting."""
 from __future__ import annotations
 
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -37,9 +38,12 @@ class SynchronizedPlainTextEdit(QPlainTextEdit):
 class DiffWidget(QWidget):
     """Side-by-side comparison widget for Original vs. Anonymized content."""
 
+    text_edited = Signal(str)
+
     def __init__(self, title: str = "Vergleich", parent: QWidget | None = None):
         super().__init__(parent)
         self.title = title
+        self._is_updating = False
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -77,10 +81,11 @@ class DiffWidget(QWidget):
 
         # Right: Anonymized
         right_col = QVBoxLayout()
-        self.right_label = QLabel("Anonymisiert (DSGVO-konform)")
+        self.right_label = QLabel("Anonymisiert (DSGVO-konform) – ✏️ Manuell bearbeitbar")
         self.right_label.setStyleSheet("color: #10b981; font-weight: 600;")
         self.right_edit = SynchronizedPlainTextEdit()
-        self.right_edit.setReadOnly(True)
+        self.right_edit.setReadOnly(False)
+        self.right_edit.textChanged.connect(self._on_right_text_changed)
         right_col.addWidget(self.right_label)
         right_col.addWidget(self.right_edit)
 
@@ -94,25 +99,62 @@ class DiffWidget(QWidget):
 
     def set_content(self, original_text: str, anonymized_text: str) -> None:
         """Populate panes and highlight modified lines."""
-        self.left_edit.setPlainText(original_text)
-        self.right_edit.setPlainText(anonymized_text)
+        self._is_updating = True
+        try:
+            self.left_edit.setPlainText(original_text)
+            self.right_edit.setPlainText(anonymized_text)
 
-        orig_lines = original_text.splitlines()
-        anon_lines = anonymized_text.splitlines()
+            orig_lines = original_text.splitlines()
+            anon_lines = anonymized_text.splitlines()
 
-        # Compute diff count
-        diff_count = 0
-        max_lines = max(len(orig_lines), len(anon_lines))
-        for i in range(max_lines):
-            l_orig = orig_lines[i] if i < len(orig_lines) else ""
-            l_anon = anon_lines[i] if i < len(anon_lines) else ""
-            if l_orig != l_anon:
-                diff_count += 1
+            # Compute diff count
+            diff_count = 0
+            max_lines = max(len(orig_lines), len(anon_lines))
+            for i in range(max_lines):
+                l_orig = orig_lines[i] if i < len(orig_lines) else ""
+                l_anon = anon_lines[i] if i < len(anon_lines) else ""
+                if l_orig != l_anon:
+                    diff_count += 1
 
-        self.stats_label.setText(f"({diff_count} geänderte Zeilen / Segmente)")
+            self.stats_label.setText(f"({diff_count} geänderte Zeilen / Segmente)")
+            self._highlight_diffs(orig_lines, anon_lines)
+        finally:
+            self._is_updating = False
 
-        # Highlight changed lines in the right edit
-        self._highlight_diffs(orig_lines, anon_lines)
+    def get_anonymized_text(self) -> str:
+        """Return the current (possibly manually edited) anonymized text."""
+        return self.right_edit.toPlainText()
+
+    def replace_text_globally(self, old_text: str, new_text: str) -> int:
+        """Replace all occurrences of old_text with new_text in the right pane.
+
+        Returns number of occurrences replaced.
+        """
+        current = self.right_edit.toPlainText()
+        if not old_text or old_text not in current:
+            return 0
+
+        count = current.count(old_text)
+        updated = current.replace(old_text, new_text)
+
+        scroll_val = self.right_edit.verticalScrollBar().value()
+        self._is_updating = True
+        try:
+            self.right_edit.setPlainText(updated)
+            orig_lines = self.left_edit.toPlainText().splitlines()
+            anon_lines = updated.splitlines()
+            self._highlight_diffs(orig_lines, anon_lines)
+            self.right_edit.verticalScrollBar().setValue(scroll_val)
+        finally:
+            self._is_updating = False
+
+        self.text_edited.emit(updated)
+        return count
+
+    def _on_right_text_changed(self) -> None:
+        if self._is_updating:
+            return
+        self.text_edited.emit(self.right_edit.toPlainText())
 
     def _highlight_diffs(self, orig_lines: list[str], anon_lines: list[str]) -> None:
         """Apply green background highlight to lines that were modified."""

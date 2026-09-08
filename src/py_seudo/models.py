@@ -30,6 +30,7 @@ class MappingEntry:
     description: str = ""
     error_mirrored: bool = False
     diagnostic_note: str = ""
+    is_manual: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class MappingEntry:
             "description": self.description,
             "error_mirrored": self.error_mirrored,
             "diagnostic_note": self.diagnostic_note,
+            "is_manual": self.is_manual,
         }
 
 

@@ -70,6 +70,7 @@ def test_export_audit_csv(tmp_path: Path):
             "Anzahl",
             "FehlerGespiegelt",
             "DiagnoseHinweis",
+            "ManuellGeaendert",
             "Beschreibung",
         ]
 

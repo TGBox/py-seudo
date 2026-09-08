@@ -95,6 +95,7 @@ class PseudoEngine:
             "kassen_iks": result.kassen_iks,
             "total_replacements": result.total_replacements,
             "total_errors_mirrored": sum(1 for m in result.mappings if m.error_mirrored),
+            "total_manual_edits": sum(1 for m in result.mappings if m.is_manual),
             "mappings": [m.to_dict() for m in result.mappings],
         }
         with open(target_path, "w", encoding="utf-8") as f:
@@ -117,6 +118,7 @@ class PseudoEngine:
                 "Anzahl",
                 "FehlerGespiegelt",
                 "DiagnoseHinweis",
+                "ManuellGeaendert",
                 "Beschreibung",
             ])
             for m in result.mappings:
@@ -127,5 +129,6 @@ class PseudoEngine:
                     m.count,
                     "Ja" if m.error_mirrored else "Nein",
                     m.diagnostic_note,
+                    "Ja" if m.is_manual else "Nein",
                     m.description,
                 ])

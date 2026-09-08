@@ -1,5 +1,6 @@
 """Main Application Window for py-seudo with Light/Dark mode, drag & drop, and tabs."""
 from __future__ import annotations
+from py_seudo.models import MappingEntry
 
 from pathlib import Path
 from typing import Optional
@@ -239,7 +240,13 @@ class MainWindow(QMainWindow):
 
         # Tab 3: Mapping Inspector
         self.mapping_widget = MappingWidget()
+        self.mapping_widget.mapping_updated.connect(self._on_mapping_updated)
+        self.mapping_widget.mapping_added.connect(self._on_mapping_added)
         self.tabs.addTab(self.mapping_widget, "🔍 Ersetzungs-Protokoll & Mappings")
+
+        # Connect text_edited signals from diff previews
+        self.esol_diff.text_edited.connect(self._on_esol_text_edited)
+        self.email_diff.text_edited.connect(self._on_email_text_edited)
 
         main_layout.addWidget(self.tabs, 1)
 
@@ -328,9 +335,56 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Fehler bei der Anonymisierung", f"Fehler aufgetreten:\n{e}")
 
+    def _on_esol_text_edited(self, text: str) -> None:
+        if self.current_result:
+            self.current_result.anonymized_esol = text
+            self.status_bar.showMessage("✏️ ESOL-Abrechnungsdatei manuell im Editor geändert.")
+
+    def _on_email_text_edited(self, text: str) -> None:
+        if self.current_result:
+            self.current_result.anonymized_email = text
+            self.status_bar.showMessage("✏️ Rückmeldungsemail manuell im Editor geändert.")
+
+    def _on_mapping_updated(self, original: str, old_pseudo: str, new_pseudo: str) -> None:
+        """Propagate updated pseudonym from the mapping table to both preview widgets."""
+        if not self.current_result:
+            return
+
+        c_esol = self.esol_diff.replace_text_globally(old_pseudo, new_pseudo)
+        c_mail = self.email_diff.replace_text_globally(old_pseudo, new_pseudo)
+        self.current_result.anonymized_esol = self.esol_diff.get_anonymized_text()
+        self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
+
+        total = c_esol + c_mail
+        self.status_bar.showMessage(
+            f"✓ Pseudonym manuell geändert: '{old_pseudo}' → '{new_pseudo}' ({total} Vorkommen in Texten aktualisiert)."
+        )
+
+    def _on_mapping_added(self, entry: MappingEntry) -> None:
+        """Apply newly added custom replacement across preview widgets and register in result."""
+        if not self.current_result:
+            return
+
+        c_esol = self.esol_diff.replace_text_globally(entry.original, entry.pseudonym)
+        c_mail = self.email_diff.replace_text_globally(entry.original, entry.pseudonym)
+        entry.count = max(1, c_esol + c_mail)
+
+        self.current_result.anonymized_esol = self.esol_diff.get_anonymized_text()
+        self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
+        self.current_result.mappings.append(entry)
+
+        self.mapping_widget.set_mappings(self.current_result)
+        self.status_bar.showMessage(
+            f"✓ Neue Ersetzung hinzugefügt: '{entry.original}' → '{entry.pseudonym}' ({entry.count} Ersetzungen)."
+        )
+
     def _save_anonymized_files(self) -> None:
         if not self.current_result:
             return
+
+        # Always read latest live text from the preview panes
+        self.current_result.anonymized_esol = self.esol_diff.get_anonymized_text()
+        self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
 
         # Offene Verdachtsfaelle vor dem Export bestaetigen lassen. Wer die Datei
         # weitergibt, soll wissen, dass noch etwas ungeklaert ist.
