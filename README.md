@@ -51,6 +51,17 @@ Falls die Erkennung eine Stelle übersehen hat oder man gezielt eigene Dummy-Wer
   - **CSV-Export (Excel-optimiert):** Mit UTF-8-BOM und den Spalten `Original`, `Pseudonym`, `Kategorie`, `Anzahl`, `FehlerGespiegelt`, `DiagnoseHinweis`, `ManuellGeaendert`, `Beschreibung`.
 - **Sicherheit:** Zuordnungen verbleiben standardmäßig ausschließlich im RAM. Lokale Audit-Exporte sind via `.gitignore` gegen versehentliche Git-Commits geschützt.
 
+### 7. 🇬🇧 Neu: Englischer Entwickler-Report & E-Mail-Übersetzung
+Um Fehleranalysen und abgewiesene Abrechnungsdaten nahtlos mit internationalen Softwareentwicklern teilen zu können, erstellt `py-seudo` automatisch einen kombinierten englischen Übergabereport (`*_summary_and_email_en.txt`):
+- **Strukturierter Aufbau (strikt ohne personenbezogene Segmentauszüge):**
+  1. **Summary of Problems & Rejection Reasons:** Technische Zusammenfassung der Abweisungsgründe (z. B. Prüfzifferndefekte, unzulässige Sonderzeichen, Doppelabrechnungen oder Diagnose-/Heilmittel-Konflikte) mit konkreten Hinweisen für Entwickler zur Fehlerbehebung im Code.
+  2. **Vollständige E-Mail-Übersetzung:** Kontexttreue Übersetzung der anonymisierten Kassen-E-Mail ins Englische unter Erhalt aller Dummy-Identifikatoren.
+- **Hybrid-Architektur (Offline-First):**
+  - **Lokaler Generator (Standard):** Arbeitet zu 100 % offline, datenschutzkonform und ohne API-Schlüssel direkt auf Ihrem Computer.
+  - **Optionale KI-APIs:** Unterstützt OpenAI / OpenAI-kompatible Endpunkte (z. B. Ollama, GPT-4o-mini), Google Gemini und Anthropic Claude zur Übersetzung.
+- **Benutzeroberfläche:** Eigener Reiter `🇬🇧 Englisch (Summary & E-Mail)` mit Live-Vorschau, Bearbeitungsmöglichkeit (`✏️ Manuell bearbeitbar`), Anbieter-Auswahl und Einstellungsdialog (`⚙️ API-Einstellungen`).
+- **Automatischer Export:** Wird beim Klick auf *„💾 Anonymisierte Dateien speichern...“* automatisch als zusätzliche Textdatei in das Zielverzeichnis exportiert.
+
 ---
 
 ## 🎨 Benutzeroberfläche
@@ -102,10 +113,10 @@ Die fertige `.exe` befindet sich anschließend im Ordner `dist/py-seudo.exe`.
 
 ## 🧪 Tests & Qualitätssicherung
 
-Das Projekt wird mit `pytest` und `pytest-cov` getestet (**91 % Testabdeckung** über 2.026 Zeilen):
+Das Projekt wird mit `pytest` und `pytest-cov` getestet (**91 % Testabdeckung** über 2.659 Zeilen, 114 Tests):
 
 ```bash
-# Alle 93 Tests ausführen
+# Alle 114 Tests ausführen
 uv run pytest
 
 # Ausführlicher Coverage-Bericht
@@ -113,6 +124,9 @@ uv run pytest --cov=py_seudo --cov-report=term-missing
 ```
 
 ### Test-Aufbau:
+- `tests/test_translation_local.py`: Tests für den lokalen Offline-Report-Generator, EDIFACT-Segmentanalyse und E-Mail-Übersetzung.
+- `tests/test_translation_api.py`: Tests für OpenAI-, Gemini- und Claude-API-Integrationen, Mock-Aufrufe, Fehlerbehandlung und QSettings.
+- `tests/test_translation_gui.py`: Tests für den Reiter `EnglishTabWidget`, `ApiSettingsDialog`, Zwischenablage und automatischen Export.
 - `tests/test_error_mirroring.py`: 14 Tests für ARGE-IK- und § 290 SGB V-Prüfziffern, Defekt-Spiegelung und Rejection-Parsing.
 - `tests/test_manual_edits.py`: 5 Tests für In-Place-Bearbeitung, Dialoge, direktes Diff-Editieren und Audit-Logging.
 - `tests/test_email_names.py`: 43 Tests für kontextbasierte Erkennung, Rollenzuordnung und stilgetreue deutsche Namen.

@@ -114,6 +114,25 @@ QPushButton#SuccessButton:hover {
     background-color: #047857;
 }
 
+QPushButton#IconButton, QPushButton#ClearButton {
+    padding: 0px;
+    margin: 0px;
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 30px;
+    max-height: 30px;
+    font-family: 'Segoe UI Emoji', 'Segoe UI Symbol', 'Segoe UI', sans-serif;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
+}
+
+QPushButton#ClearButton:hover {
+    background-color: #7f1d1d;
+    color: #fca5a5;
+    border-color: #ef4444;
+}
+
 QLineEdit, QTextEdit, QPlainTextEdit {
     background-color: #0f172a;
     color: #f8fafc;
@@ -125,6 +144,99 @@ QLineEdit, QTextEdit, QPlainTextEdit {
 
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
     border: 1px solid #38bdf8;
+}
+
+QComboBox {
+    background-color: #0f172a;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 6px 12px;
+    min-height: 20px;
+}
+
+QComboBox:hover {
+    border-color: #475569;
+}
+
+QComboBox:focus, QComboBox:on {
+    border-color: #38bdf8;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 26px;
+    border-left: 1px solid #334155;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+    background-color: #1e293b;
+}
+
+QComboBox::down-arrow {
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #94a3b8;
+}
+
+QComboBox::down-arrow:hover {
+    border-top: 5px solid #f8fafc;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 4px;
+    selection-background-color: #4f46e5;
+    selection-color: #ffffff;
+    outline: 0px;
+}
+
+QComboBox QAbstractItemView::item {
+    min-height: 28px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: #f8fafc;
+    background-color: #1e293b;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #334155;
+    color: #f8fafc;
+}
+
+QComboBox QAbstractItemView::item:selected {
+    background-color: #4f46e5;
+    color: #ffffff;
+}
+
+QMenu {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 20px 6px 12px;
+    border-radius: 4px;
+    color: #f8fafc;
+}
+
+QMenu::item:selected {
+    background-color: #4f46e5;
+    color: #ffffff;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #334155;
+    margin: 4px 8px;
 }
 
 QTableWidget {
@@ -305,6 +417,25 @@ QPushButton#SuccessButton:hover {
     background-color: #059669;
 }
 
+QPushButton#IconButton, QPushButton#ClearButton {
+    padding: 0px;
+    margin: 0px;
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 30px;
+    max-height: 30px;
+    font-family: 'Segoe UI Emoji', 'Segoe UI Symbol', 'Segoe UI', sans-serif;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
+}
+
+QPushButton#ClearButton:hover {
+    background-color: #fee2e2;
+    color: #dc2626;
+    border-color: #ef4444;
+}
+
 QLineEdit, QTextEdit, QPlainTextEdit {
     background-color: #ffffff;
     color: #0f172a;
@@ -316,6 +447,99 @@ QLineEdit, QTextEdit, QPlainTextEdit {
 
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
     border: 1px solid #0284c7;
+}
+
+QComboBox {
+    background-color: #ffffff;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 6px 12px;
+    min-height: 20px;
+}
+
+QComboBox:hover {
+    border-color: #94a3b8;
+}
+
+QComboBox:focus, QComboBox:on {
+    border-color: #0284c7;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 26px;
+    border-left: 1px solid #cbd5e1;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+    background-color: #f1f5f9;
+}
+
+QComboBox::down-arrow {
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #64748b;
+}
+
+QComboBox::down-arrow:hover {
+    border-top: 5px solid #0f172a;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 4px;
+    selection-background-color: #e0e7ff;
+    selection-color: #1e1b4b;
+    outline: 0px;
+}
+
+QComboBox QAbstractItemView::item {
+    min-height: 28px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: #0f172a;
+    background-color: #ffffff;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #f1f5f9;
+    color: #0f172a;
+}
+
+QComboBox QAbstractItemView::item:selected {
+    background-color: #e0e7ff;
+    color: #1e1b4b;
+}
+
+QMenu {
+    background-color: #ffffff;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 20px 6px 12px;
+    border-radius: 4px;
+    color: #0f172a;
+}
+
+QMenu::item:selected {
+    background-color: #e0e7ff;
+    color: #1e1b4b;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #e2e8f0;
+    margin: 4px 8px;
 }
 
 QTableWidget {

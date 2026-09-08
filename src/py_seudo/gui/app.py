@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from py_seudo.engine import PseudoEngine
 from py_seudo.gui.diff_widget import DiffWidget
+from py_seudo.gui.english_tab import EnglishTabWidget
 from py_seudo.gui.mapping_widget import MappingWidget
 from py_seudo.gui.theme import DARK_THEME, LIGHT_THEME
 from py_seudo.models import AnonymizationResult
@@ -57,8 +58,9 @@ class FileDropBox(QGroupBox):
         self.browse_btn.clicked.connect(self._browse)
 
         self.clear_btn = QPushButton("✕")
+        self.clear_btn.setObjectName("ClearButton")
         self.clear_btn.setToolTip("Datei entfernen")
-        self.clear_btn.setMaximumWidth(32)
+        self.clear_btn.setFixedSize(32, 30)
         self.clear_btn.clicked.connect(self.clear)
         self.clear_btn.setEnabled(False)
 
@@ -244,6 +246,11 @@ class MainWindow(QMainWindow):
         self.mapping_widget.mapping_added.connect(self._on_mapping_added)
         self.tabs.addTab(self.mapping_widget, "🔍 Ersetzungs-Protokoll & Mappings")
 
+        # Tab 4: English Developer Report & Translation
+        self.english_tab = EnglishTabWidget()
+        self.english_tab.report_edited.connect(self._on_english_report_edited)
+        self.tabs.addTab(self.english_tab, "🇬🇧 Englisch (Summary & E-Mail)")
+
         # Connect text_edited signals from diff previews
         self.esol_diff.text_edited.connect(self._on_esol_text_edited)
         self.email_diff.text_edited.connect(self._on_email_text_edited)
@@ -284,6 +291,7 @@ class MainWindow(QMainWindow):
         self.esol_diff.set_content("", "")
         self.email_diff.set_content("", "")
         self.mapping_widget.set_mappings(AnonymizationResult())
+        self.english_tab.set_result(None)
         self.save_files_btn.setEnabled(False)
         self.current_result = None
         self.status_bar.showMessage("Zurückgesetzt. Bereit für neue Dateien.")
@@ -312,6 +320,7 @@ class MainWindow(QMainWindow):
             self.esol_diff.set_content(result.original_esol, result.anonymized_esol)
             self.email_diff.set_content(result.original_email, result.anonymized_email)
             self.mapping_widget.set_mappings(result)
+            self.english_tab.set_result(result)
 
             self.save_files_btn.setEnabled(True)
 
@@ -345,6 +354,11 @@ class MainWindow(QMainWindow):
             self.current_result.anonymized_email = text
             self.status_bar.showMessage("✏️ Rückmeldungsemail manuell im Editor geändert.")
 
+    def _on_english_report_edited(self, text: str) -> None:
+        if self.current_result:
+            self.current_result.english_report = text
+            self.status_bar.showMessage("✏️ Englischer Report manuell im Editor geändert.")
+
     def _on_mapping_updated(self, original: str, old_pseudo: str, new_pseudo: str) -> None:
         """Propagate updated pseudonym from the mapping table to both preview widgets."""
         if not self.current_result:
@@ -356,6 +370,7 @@ class MainWindow(QMainWindow):
         self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
 
         total = c_esol + c_mail
+        self.english_tab.set_result(self.current_result)
         self.status_bar.showMessage(
             f"✓ Pseudonym manuell geändert: '{old_pseudo}' → '{new_pseudo}' ({total} Vorkommen in Texten aktualisiert)."
         )
@@ -374,6 +389,7 @@ class MainWindow(QMainWindow):
         self.current_result.mappings.append(entry)
 
         self.mapping_widget.set_mappings(self.current_result)
+        self.english_tab.set_result(self.current_result)
         self.status_bar.showMessage(
             f"✓ Neue Ersetzung hinzugefügt: '{entry.original}' → '{entry.pseudonym}' ({entry.count} Ersetzungen)."
         )
@@ -443,6 +459,20 @@ class MainWindow(QMainWindow):
                 p_mail = dest / email_name
                 p_mail.write_text(self.current_result.anonymized_email, encoding="utf-8")
                 saved_files.append(p_mail.name)
+
+            # Export English Summary & Translation file if available
+            self.current_result.english_report = self.english_tab.get_report_text()
+            if self.current_result.english_report and self.current_result.english_report.strip():
+                if self.esol_box.file_path:
+                    base_stem = self.esol_box.file_path.stem
+                elif self.email_box.file_path:
+                    base_stem = self.email_box.file_path.stem
+                else:
+                    base_stem = "abrechnung"
+                en_name = f"{base_stem}_anonymisiert_summary_and_email_en.txt"
+                p_en = dest / en_name
+                p_en.write_text(self.current_result.english_report, encoding="utf-8")
+                saved_files.append(p_en.name)
 
             QMessageBox.information(
                 self,

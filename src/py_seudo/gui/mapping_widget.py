@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListView,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -56,6 +57,7 @@ class AddMappingDialog(QDialog):
         self.pseudo_edit.setPlaceholderText("z. B. Dr. med. Musterarzt_99 oder 999000009")
 
         self.cat_combo = QComboBox()
+        self.cat_combo.setView(QListView())
         for cat in ReplacementCategory:
             self.cat_combo.addItem(cat.value, cat)
 

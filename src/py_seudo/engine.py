@@ -80,7 +80,20 @@ class PseudoEngine:
 
         # Aggregate unique mappings
         result.mappings = list(shared_mappings.values())
+
+        # Generate English developer report (100% offline, local generator)
+        from py_seudo.translation.local_generator import LocalReportGenerator
+        result.english_report = LocalReportGenerator.generate_report(result)
+
         return result
+
+    @staticmethod
+    def export_english_report(result: AnonymizationResult, target_path: Path) -> None:
+        """Export the English developer handover report to text file."""
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        from py_seudo.translation.local_generator import LocalReportGenerator
+        content = result.english_report or LocalReportGenerator.generate_report(result)
+        target_path.write_text(content, encoding="utf-8")
 
     @staticmethod
     def export_audit_mapping_json(result: AnonymizationResult, target_path: Path) -> None:

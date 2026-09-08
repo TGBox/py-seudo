@@ -72,6 +72,7 @@ class AnonymizationResult:
     practice_iks: List[str] = field(default_factory=list)
     kassen_iks: List[str] = field(default_factory=list)
     suspicions: List[Suspicion] = field(default_factory=list)
+    english_report: str = ""
 
     @property
     def total_replacements(self) -> int:
