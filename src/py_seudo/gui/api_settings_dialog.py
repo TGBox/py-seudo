@@ -41,7 +41,7 @@ class ApiSettingsDialog(QDialog):
             "Wenn Sie hier einen externen Dienst konfigurieren, wird dieser nur verwendet, wenn\n"
             "Sie ihn im Reiter 'Englisch' explizit als Anbieter auswählen."
         )
-        info_label.setStyleSheet("color: #94a3b8; font-size: 11px; margin-bottom: 6px;")
+        info_label.setObjectName("MutedLabel")
         layout.addWidget(info_label)
 
         self.tab_widget = QTabWidget()

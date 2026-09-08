@@ -46,7 +46,7 @@ class AddMappingDialog(QDialog):
             "Geben Sie den sensiblen Originalwert und das gewünschte Pseudonym an.\n"
             "Der Wert wird global in der Abrechnungsdatei und der E-Mail ersetzt."
         )
-        info_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        info_lbl.setObjectName("MutedLabel")
         layout.addWidget(info_lbl)
 
         form = QFormLayout()
@@ -110,7 +110,13 @@ class MappingWidget(QWidget):
         self.current_result: AnonymizationResult | None = None
         self.all_mappings: List[MappingEntry] = []
         self._is_populating = False
+        self.is_dark_mode = True
         self._init_ui()
+
+    def update_theme(self, is_dark: bool) -> None:
+        self.is_dark_mode = is_dark
+        if self.all_mappings:
+            self._populate_table(self.all_mappings)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -121,7 +127,7 @@ class MappingWidget(QWidget):
         ctrl_bar = QHBoxLayout()
 
         self.summary_label = QLabel("Keine Mappings geladen")
-        self.summary_label.setStyleSheet("font-weight: 600; color: #38bdf8;")
+        self.summary_label.setObjectName("SummaryLabel")
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("🔍 In Mappings filtern...")
@@ -149,10 +155,7 @@ class MappingWidget(QWidget):
             "🔒 DSGVO-Schutz: Diese Zuordnungen verbleiben standardmäßig ausschließlich im Arbeitsspeicher "
             "und werden niemals automatisch in Dateien oder Git gespeichert."
         )
-        self.security_banner.setStyleSheet(
-            "background-color: #1e3a8a; color: #93c5fd; padding: 6px 12px; "
-            "border-radius: 6px; font-size: 11px;"
-        )
+        self.security_banner.setObjectName("SecurityBanner")
         layout.addWidget(self.security_banner)
 
         # Restrisiko: Stellen, die nach Personenbezug aussehen, aber nicht
@@ -160,10 +163,6 @@ class MappingWidget(QWidget):
         self.suspicion_banner = QLabel()
         self.suspicion_banner.setObjectName("SuspicionBanner")
         self.suspicion_banner.setWordWrap(True)
-        self.suspicion_banner.setStyleSheet(
-            "background-color: #7c2d12; color: #fed7aa; padding: 8px 12px; "
-            "border-radius: 6px; font-size: 11px;"
-        )
         self.suspicion_banner.hide()
         layout.addWidget(self.suspicion_banner)
 
@@ -266,6 +265,15 @@ class MappingWidget(QWidget):
                 count_item.setFlags(count_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
                 # Status badge (Error mirroring / manual)
+                if self.is_dark_mode:
+                    manual_color = QColor("#38bdf8")
+                    mirrored_color = QColor("#fb923c")
+                    valid_color = QColor("#34d399")
+                else:
+                    manual_color = QColor("#0369a1")
+                    mirrored_color = QColor("#c2410c")
+                    valid_color = QColor("#15803d")
+
                 if entry.is_manual:
                     if entry.error_mirrored:
                         status_item = QTableWidgetItem("⚠️ Gespiegelt (✏️ Manuell)")
@@ -273,14 +281,14 @@ class MappingWidget(QWidget):
                     else:
                         status_item = QTableWidgetItem("✏️ Manuell")
                         status_item.setToolTip("Dieser Pseudowert wurde manuell angepasst")
-                    status_item.setForeground(QColor("#38bdf8"))
+                    status_item.setForeground(manual_color)
                 elif entry.error_mirrored:
                     status_item = QTableWidgetItem("⚠️ Gespiegelt")
-                    status_item.setForeground(QColor("#f97316"))
+                    status_item.setForeground(mirrored_color)
                     status_item.setToolTip(entry.diagnostic_note or "Fehlerhafter Wert wurde gespiegelt")
                 else:
                     status_item = QTableWidgetItem("✓ Valide")
-                    status_item.setForeground(QColor("#22c55e"))
+                    status_item.setForeground(valid_color)
                     status_item.setToolTip("Syntaktisch und mathematisch valider Pseudowert")
                 status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)

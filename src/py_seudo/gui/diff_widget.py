@@ -55,7 +55,7 @@ class DiffWidget(QWidget):
         toolbar = QHBoxLayout()
         self.title_label = QLabel(f"<b>{self.title}</b>")
         self.stats_label = QLabel("")
-        self.stats_label.setStyleSheet("color: #38bdf8; font-weight: 500;")
+        self.stats_label.setObjectName("DiffStatsLabel")
 
         self.copy_btn = QPushButton("📋 Anonymisierten Text kopieren")
         self.copy_btn.clicked.connect(self._copy_anonymized)
@@ -73,7 +73,7 @@ class DiffWidget(QWidget):
         # Left: Original
         left_col = QVBoxLayout()
         self.left_label = QLabel("Original (Sensible Echtdaten)")
-        self.left_label.setStyleSheet("color: #ef4444; font-weight: 600;")
+        self.left_label.setObjectName("DiffLeftLabel")
         self.left_edit = SynchronizedPlainTextEdit()
         self.left_edit.setReadOnly(True)
         left_col.addWidget(self.left_label)
@@ -82,7 +82,7 @@ class DiffWidget(QWidget):
         # Right: Anonymized
         right_col = QVBoxLayout()
         self.right_label = QLabel("Anonymisiert (DSGVO-konform) – ✏️ Manuell bearbeitbar")
-        self.right_label.setStyleSheet("color: #10b981; font-weight: 600;")
+        self.right_label.setObjectName("DiffRightLabel")
         self.right_edit = SynchronizedPlainTextEdit()
         self.right_edit.setReadOnly(False)
         self.right_edit.textChanged.connect(self._on_right_text_changed)

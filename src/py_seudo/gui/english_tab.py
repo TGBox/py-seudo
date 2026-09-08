@@ -36,7 +36,12 @@ class EnglishTabWidget(QWidget):
         super().__init__(parent)
         self.settings: TranslationSettings = SettingsManager.load_settings()
         self.current_result: Optional[AnonymizationResult] = None
+        self.is_dark_mode = True
         self._init_ui()
+
+    def update_theme(self, is_dark: bool) -> None:
+        self.is_dark_mode = is_dark
+        self._update_status_badge()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -77,18 +82,12 @@ class EnglishTabWidget(QWidget):
         toolbar_layout.addStretch()
 
         self.status_badge = QLabel("✓ Lokaler Generator (Offline)")
-        self.status_badge.setStyleSheet(
-            "background-color: #064e3b; color: #34d399; font-weight: bold; "
-            "padding: 4px 8px; border-radius: 4px; font-size: 11px;"
-        )
+        self.status_badge.setObjectName("StatusBadge")
         toolbar_layout.addWidget(self.status_badge)
         self._update_status_badge()
 
         edit_badge = QLabel("✏️ Manuell bearbeitbar")
-        edit_badge.setStyleSheet(
-            "background-color: #1e293b; color: #94a3b8; "
-            "padding: 4px 8px; border-radius: 4px; font-size: 11px;"
-        )
+        edit_badge.setObjectName("EditBadge")
         toolbar_layout.addWidget(edit_badge)
 
         layout.addWidget(toolbar_card)
@@ -110,7 +109,7 @@ class EnglishTabWidget(QWidget):
         bottom_bar.setSpacing(10)
 
         self.stats_label = QLabel("0 Zeichen | 0 Zeilen")
-        self.stats_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self.stats_label.setObjectName("MutedLabel")
         bottom_bar.addWidget(self.stats_label)
 
         bottom_bar.addStretch()
@@ -139,33 +138,62 @@ class EnglishTabWidget(QWidget):
 
     def _update_status_badge(self) -> None:
         p = self.settings.provider
-        if p == TranslationProvider.LOCAL:
-            self.status_badge.setText("✓ Lokaler Generator (Offline)")
-            self.status_badge.setStyleSheet(
-                "background-color: #064e3b; color: #34d399; font-weight: bold; "
-                "padding: 4px 8px; border-radius: 4px; font-size: 11px;"
-            )
-        elif p == TranslationProvider.OPENAI:
-            model = self.settings.openai_model or "gpt-4o-mini"
-            self.status_badge.setText(f"🌐 OpenAI ({model})")
-            self.status_badge.setStyleSheet(
-                "background-color: #1e3a8a; color: #60a5fa; font-weight: bold; "
-                "padding: 4px 8px; border-radius: 4px; font-size: 11px;"
-            )
-        elif p == TranslationProvider.GEMINI:
-            model = self.settings.gemini_model or "gemini-1.5-flash"
-            self.status_badge.setText(f"🌐 Gemini ({model})")
-            self.status_badge.setStyleSheet(
-                "background-color: #1e3a8a; color: #60a5fa; font-weight: bold; "
-                "padding: 4px 8px; border-radius: 4px; font-size: 11px;"
-            )
-        elif p == TranslationProvider.CLAUDE:
-            model = self.settings.claude_model or "claude-3-5-haiku"
-            self.status_badge.setText(f"🌐 Claude ({model})")
-            self.status_badge.setStyleSheet(
-                "background-color: #581c87; color: #c084fc; font-weight: bold; "
-                "padding: 4px 8px; border-radius: 4px; font-size: 11px;"
-            )
+        if self.is_dark_mode:
+            if p == TranslationProvider.LOCAL:
+                self.status_badge.setText("✓ Lokaler Generator (Offline)")
+                self.status_badge.setStyleSheet(
+                    "background-color: #064e3b; color: #34d399; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #059669;"
+                )
+            elif p == TranslationProvider.OPENAI:
+                model = self.settings.openai_model or "gpt-4o-mini"
+                self.status_badge.setText(f"🌐 OpenAI ({model})")
+                self.status_badge.setStyleSheet(
+                    "background-color: #1e3a8a; color: #93c5fd; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #2563eb;"
+                )
+            elif p == TranslationProvider.GEMINI:
+                model = self.settings.gemini_model or "gemini-1.5-flash"
+                self.status_badge.setText(f"🌐 Gemini ({model})")
+                self.status_badge.setStyleSheet(
+                    "background-color: #1e3a8a; color: #93c5fd; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #2563eb;"
+                )
+            elif p == TranslationProvider.CLAUDE:
+                model = self.settings.claude_model or "claude-3-5-haiku"
+                self.status_badge.setText(f"🌐 Claude ({model})")
+                self.status_badge.setStyleSheet(
+                    "background-color: #581c87; color: #d8b4fe; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #7e22ce;"
+                )
+        else:
+            if p == TranslationProvider.LOCAL:
+                self.status_badge.setText("✓ Lokaler Generator (Offline)")
+                self.status_badge.setStyleSheet(
+                    "background-color: #ecfdf5; color: #065f46; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #a7f3d0;"
+                )
+            elif p == TranslationProvider.OPENAI:
+                model = self.settings.openai_model or "gpt-4o-mini"
+                self.status_badge.setText(f"🌐 OpenAI ({model})")
+                self.status_badge.setStyleSheet(
+                    "background-color: #eff6ff; color: #1e40af; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #bfdbfe;"
+                )
+            elif p == TranslationProvider.GEMINI:
+                model = self.settings.gemini_model or "gemini-1.5-flash"
+                self.status_badge.setText(f"🌐 Gemini ({model})")
+                self.status_badge.setStyleSheet(
+                    "background-color: #eff6ff; color: #1e40af; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #bfdbfe;"
+                )
+            elif p == TranslationProvider.CLAUDE:
+                model = self.settings.claude_model or "claude-3-5-haiku"
+                self.status_badge.setText(f"🌐 Claude ({model})")
+                self.status_badge.setStyleSheet(
+                    "background-color: #faf5ff; color: #6b21a8; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; font-size: 11px; border: 1px solid #e9d5ff;"
+                )
 
     def _open_settings(self) -> None:
         dialog = ApiSettingsDialog(self)

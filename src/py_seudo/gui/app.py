@@ -52,7 +52,7 @@ class FileDropBox(QGroupBox):
         layout.setSpacing(8)
 
         self.path_label = QLabel("Keine Datei ausgewählt (Hierher ziehen oder durchsuchen)")
-        self.path_label.setStyleSheet("color: #94a3b8; font-style: italic;")
+        self.path_label.setObjectName("PathLabelEmpty")
 
         self.browse_btn = QPushButton("📁 Durchsuchen...")
         self.browse_btn.clicked.connect(self._browse)
@@ -86,7 +86,9 @@ class FileDropBox(QGroupBox):
             self.file_path = path
             self.file_content = content
             self.path_label.setText(f"✓ {path.name} ({len(content)} Zeichen)")
-            self.path_label.setStyleSheet("color: #10b981; font-weight: 500;")
+            self.path_label.setObjectName("PathLabelLoaded")
+            self.path_label.style().unpolish(self.path_label)
+            self.path_label.style().polish(self.path_label)
             self.clear_btn.setEnabled(True)
         except Exception as e:
             QMessageBox.critical(self, "Fehler beim Lesen", f"Konnte Datei nicht öffnen:\n{e}")
@@ -95,14 +97,18 @@ class FileDropBox(QGroupBox):
         self.file_path = Path(name)
         self.file_content = text
         self.path_label.setText(f"✓ {name} (Demo-Datensatz, {len(text)} Zeichen)")
-        self.path_label.setStyleSheet("color: #38bdf8; font-weight: 500;")
+        self.path_label.setObjectName("PathLabelDemo")
+        self.path_label.style().unpolish(self.path_label)
+        self.path_label.style().polish(self.path_label)
         self.clear_btn.setEnabled(True)
 
     def clear(self) -> None:
         self.file_path = None
         self.file_content = ""
         self.path_label.setText("Keine Datei ausgewählt (Hierher ziehen oder durchsuchen)")
-        self.path_label.setStyleSheet("color: #94a3b8; font-style: italic;")
+        self.path_label.setObjectName("PathLabelEmpty")
+        self.path_label.style().unpolish(self.path_label)
+        self.path_label.style().polish(self.path_label)
         self.clear_btn.setEnabled(False)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
@@ -146,9 +152,9 @@ class MainWindow(QMainWindow):
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
         app_title = QLabel("py-seudo")
-        app_title.setStyleSheet("font-size: 20px; font-weight: 700; color: #38bdf8;")
+        app_title.setObjectName("AppTitle")
         app_subtitle = QLabel("DSGVO-konforme Pseudonymisierung von ESOL-Abrechnungen und Kassen-Rückmeldungen")
-        app_subtitle.setStyleSheet("font-size: 12px; color: #94a3b8;")
+        app_subtitle.setObjectName("AppSubtitle")
         title_box.addWidget(app_title)
         title_box.addWidget(app_subtitle)
         header.addLayout(title_box)
@@ -273,6 +279,8 @@ class MainWindow(QMainWindow):
         else:
             self.setStyleSheet(LIGHT_THEME)
             self.theme_btn.setText("🌙 Dark Mode")
+        self.mapping_widget.update_theme(self.is_dark_mode)
+        self.english_tab.update_theme(self.is_dark_mode)
 
     def _load_demo_data(self) -> None:
         self.esol_box.set_direct_text("demo_ESOL0001.txt", SAMPLE_ESOL)
