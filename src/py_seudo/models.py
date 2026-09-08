@@ -17,6 +17,7 @@ class ReplacementCategory(str, Enum):
     DOCTOR_BSNR = "Betriebsstättennummer (BSNR)"
     INVOICE_NUMBER = "Rechnungs-/Belegnummer"
     CONTACT_INFO = "Kontaktdaten / Signatur"
+    CONTACT_PERSON = "Kontaktperson (Anrede / Signatur)"
     OTHER = "Sonstiges"
 
 
@@ -39,6 +40,23 @@ class MappingEntry:
 
 
 @dataclass
+class Suspicion:
+    """Eine Stelle, die nach Personenbezug aussieht, aber nicht ersetzt wurde.
+
+    Verdachtsfaelle werden gemeldet statt still uebergangen: der Anwender soll
+    sehen, was das Programm nicht sicher zuordnen konnte, bevor er die Datei
+    aus der Hand gibt.
+    """
+
+    text: str
+    line: int
+    reason: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"text": self.text, "line": self.line, "reason": self.reason}
+
+
+@dataclass
 class AnonymizationResult:
     original_esol: str = ""
     anonymized_esol: str = ""
@@ -47,10 +65,16 @@ class AnonymizationResult:
     mappings: List[MappingEntry] = field(default_factory=list)
     practice_iks: List[str] = field(default_factory=list)
     kassen_iks: List[str] = field(default_factory=list)
+    suspicions: List[Suspicion] = field(default_factory=list)
 
     @property
     def total_replacements(self) -> int:
         return sum(m.count for m in self.mappings)
+
+    @property
+    def is_clean(self) -> bool:
+        """True, wenn kein Verdachtsfall offen ist."""
+        return not self.suspicions
 
     def get_mappings_by_category(self) -> Dict[str, List[MappingEntry]]:
         result: Dict[str, List[MappingEntry]] = {}

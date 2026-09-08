@@ -22,6 +22,20 @@
   - Gleiche Pseudonyme wie in der ESOL-Datei (derselbe Dummy-Patientenname, dieselbe Dummy-KVNR).
   - Bereinigung von Kopfzeilen (`From`, `To`, `Cc`, `Subject`, `Message-ID`).
   - Automatische Maskierung von E-Mail-Adressen, Telefon- und Faxnummern.
+  - **Namenserkennung über den Kontext:** Auch Namen, die *nur* in der E-Mail stehen und
+    daher aus der ESOL-Datei nicht bekannt sind, werden ersetzt – Anrede
+    (`Sehr geehrte Frau …`), Arzttitel (`Dr. med. …`), Feldbeschriftungen
+    (`Patient:`, `Verordnender Arzt:`) und Signaturblöcke. Patienten, Ärzte und
+    Sachbearbeiter bekommen dabei unterscheidbare Pseudonyme; derselbe Name behält
+    über die ganze E-Mail hinweg dasselbe Pseudonym, auch wenn er einmal mit und
+    einmal ohne Vornamen auftaucht.
+  - Kassennamen (`Techniker Krankenkasse`, `AOK`, …) bleiben als Klartext erhalten –
+    sie sind kein Personenbezug, aber für die Fehlersuche relevant.
+- ⚠️ **Restrisiko-Meldung statt stillem Durchlauf:**
+  Stellen, die nach Personenbezug aussehen, aber nicht sicher zugeordnet werden konnten
+  (z. B. ein Versalien-Nachname hinter einer Anrede), werden **nicht** heimlich
+  übergangen, sondern im Reiter *Ersetzungs-Protokoll* aufgelistet. Vor dem Export
+  fragt py-seudo in diesem Fall nach.
 - 🎨 **Moderne Desktop-Oberfläche:**
   - Auswahl zwischen **Dark Mode** und **Light Mode**.
   - **Drag & Drop** von Dateien direkt ins Programmfenster.

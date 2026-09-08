@@ -4,23 +4,64 @@ from __future__ import annotations
 import email
 from email import policy
 import re
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence, Tuple
 
-from py_seudo.models import MappingEntry, ReplacementCategory
+from py_seudo.email.names import NameDetector, NameHit, NameRole
+from py_seudo.models import MappingEntry, ReplacementCategory, Suspicion
+
+
+@dataclass(frozen=True)
+class _Span:
+    """Eine geplante Ersetzung an einer konkreten Textstelle."""
+
+    start: int
+    end: int
+    original: str
+    replacement: str
+    category: ReplacementCategory
+    description: str
+    #: Hoehere Prioritaet gewinnt bei Ueberschneidung.
+    priority: int
+
+
+# Prioritaeten: was aus der ESOL-Datei bekannt ist, schlaegt jede Heuristik.
+_PRIO_MAPPING = 40
+_PRIO_NAME = 30
+_PRIO_EMAIL = 20
+_PRIO_IK = 15
+_PRIO_PHONE = 10
+
+_ROLE_CATEGORY = {
+    NameRole.PATIENT: ReplacementCategory.PATIENT_NAME,
+    NameRole.DOCTOR: ReplacementCategory.DOCTOR_NAME,
+    NameRole.CONTACT: ReplacementCategory.CONTACT_PERSON,
+}
 
 
 class EmailAnonymizer:
     """Sanitizes email headers, contact signatures, and harmonizes body text
 
     with the pseudonyms established during ESOL anonymization.
+
+    Namen, die nur in der E-Mail vorkommen und daher aus der ESOL-Datei nicht
+    bekannt sind, werden ueber ihren Kontext erkannt (siehe
+    :mod:`py_seudo.email.names`). Was dabei unklar bleibt, landet in
+    :attr:`suspicions` und wird dem Anwender gemeldet.
     """
 
     PHONE_REGEX = re.compile(
         r"(?:(?:(?:\+|00)49\s*[\d\s\/\(\)-]{7,})|(?:\b0[1-9][\d\s\/\(\)-]{6,}\b))"
     )
-    EMAIL_REGEX = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+    EMAIL_REGEX = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
     KVNR_REGEX = re.compile(r"\b[A-Z]\d{9}\b")
     IK_REGEX = re.compile(r"\b\d{9}\b")
+
+    # Domains, die von py-seudo selbst erzeugt werden und daher nicht erneut
+    # ersetzt werden duerfen. RFC 2606 / RFC 6761 reservieren .invalid und .example
+    # ausdruecklich fuer solche Zwecke.
+    PLACEHOLDER_DOMAINS = frozenset({"beispiel.invalid", "kasse.invalid", "example.com"})
+    PLACEHOLDER_TLDS = (".invalid", ".example", ".test", ".localhost")
 
     def __init__(
         self,
@@ -34,6 +75,18 @@ class EmailAnonymizer:
         self.practice_iks = set(practice_iks or [])
         self.kassen_iks = set(kassen_iks or [])
         self.email_mappings: List[MappingEntry] = []
+        self.suspicions: List[Suspicion] = []
+
+        # Personen, die erst in der E-Mail auftauchen. Schluessel ist (Rolle, Nachname),
+        # damit "Sehr geehrte Frau Becker" und die Signatur "Andrea Becker" dieselbe
+        # Nummer bekommen, ein Patient Meier und ein Sachbearbeiter Meier aber nicht.
+        self._person_index: Dict[Tuple[NameRole, str], int] = {}
+        self._person_gender: Dict[Tuple[NameRole, str], str] = {}
+        self._person_counter = self._highest_used_index()
+
+    # ------------------------------------------------------------------
+    # Einstieg
+    # ------------------------------------------------------------------
 
     def anonymize(self) -> Tuple[str, List[MappingEntry]]:
         """Anonymize the email (either RFC 822 .eml format or plain text)."""
@@ -42,8 +95,7 @@ class EmailAnonymizer:
 
         if self._is_rfc822_email(self.raw_email):
             return self._anonymize_rfc822()
-        else:
-            return self._anonymize_plain_text()
+        return self._anonymize_plain_text()
 
     def _is_rfc822_email(self, text: str) -> bool:
         """Heuristic to determine whether input is an RFC 822 email file."""
@@ -92,7 +144,7 @@ class EmailAnonymizer:
 
         if "subject" in msg:
             orig_subj = msg["subject"]
-            sanitized_subj = self._apply_replacements(orig_subj)
+            sanitized_subj = self._apply_replacements(orig_subj, section="Betreff")
             msg.replace_header("subject", sanitized_subj)
 
         # Ensure Content-Transfer-Encoding is 8bit so output remains clean human-readable text
@@ -102,14 +154,14 @@ class EmailAnonymizer:
 
         # Process payload
         if msg.is_multipart():
-            for part in msg.walk():
+            for idx, part in enumerate(msg.walk(), start=1):
                 content_type = part.get_content_type()
                 if content_type in ("text/plain", "text/html"):
                     try:
                         payload = part.get_payload(decode=True)
                         charset = part.get_content_charset() or "utf-8"
                         text = payload.decode(charset, errors="replace")
-                        sanitized = self._apply_replacements(text)
+                        sanitized = self._apply_replacements(text, section=f"Textteil {idx}")
                         part.set_payload(sanitized)
                         if "content-transfer-encoding" in part:
                             del part["content-transfer-encoding"]
@@ -124,7 +176,7 @@ class EmailAnonymizer:
                     text = payload.decode(charset, errors="replace")
                 else:
                     text = msg.get_payload() or ""
-                sanitized = self._apply_replacements(text)
+                sanitized = self._apply_replacements(text, section="Nachrichtentext")
                 msg.set_payload(sanitized)
             except Exception:
                 pass
@@ -133,77 +185,248 @@ class EmailAnonymizer:
 
     def _anonymize_plain_text(self) -> Tuple[str, List[MappingEntry]]:
         """Sanitize plain text email content."""
-        sanitized = self._apply_replacements(self.raw_email)
+        sanitized = self._apply_replacements(self.raw_email, section="Text")
         return sanitized, self.email_mappings
 
-    def _apply_replacements(self, text: str) -> str:
-        """Apply all shared ESOL mappings first, then apply general regex sanitizers."""
-        result = text
+    # ------------------------------------------------------------------
+    # Ersetzung: ein Durchlauf ueber ueberschneidungsfreie Bereiche
+    # ------------------------------------------------------------------
 
-        # 1. Apply known mappings from ESOL (longest strings first)
-        sorted_mappings = sorted(
-            self.shared_mappings.items(), key=lambda item: len(item[0]), reverse=True
-        )
+    def _apply_replacements(self, text: str, section: str = "") -> str:
+        """Alle Ersetzungen in EINEM Durchlauf.
 
-        for orig_key, entry in sorted_mappings:
-            if not orig_key or len(orig_key) < 2:
-                continue
+        Frueher lief pro Mapping ein eigenes ``re.sub`` ueber den bereits
+        veraenderten Text. Dabei konnte ein eingesetztes Pseudonym von einer
+        spaeteren Regel erneut getroffen werden -- ESOL-Datei und E-Mail
+        widersprachen sich dann. Hier werden erst alle Fundstellen auf dem
+        Originaltext gesammelt, Ueberschneidungen aufgeloest und dann genau
+        einmal ersetzt.
+        """
+        if not text:
+            return text
 
-            if re.match(r"^\w+$", orig_key):
-                pattern = rf"\b{re.escape(orig_key)}\b"
-            else:
-                pattern = re.escape(orig_key)
+        mapping_spans = self._mapping_spans(text)
+        email_spans = self._email_spans(text)
 
-            matches = list(re.finditer(pattern, result))
-            if matches:
-                result = re.sub(pattern, entry.pseudonym, result)
-                self._record_mapping(
-                    orig_key,
-                    entry.pseudonym,
-                    entry.category,
-                    f"E-Mail Ersetzung: {entry.description or orig_key}",
-                    count=len(matches),
-                )
+        protected = [(s.start, s.end) for s in mapping_spans + email_spans]
+        detector = NameDetector(protected)
+        name_spans = self._name_spans(text, detector)
 
-        # 2. General regex for Phone numbers
-        for match in self.PHONE_REGEX.finditer(result):
-            phone_str = match.group(0).strip()
-            if re.match(r"^\d{2}\.\d{2}\.\d{4}$", phone_str) or re.match(r"^\d{9}$", phone_str):
-                continue
-            dummy_phone = "+49 000 0000000"
-            result = result.replace(phone_str, dummy_phone)
+        spans = mapping_spans + email_spans + name_spans
+        spans += self._ik_spans(text)
+        spans += self._phone_spans(text)
+
+        accepted = self._resolve_overlaps(spans)
+        result = self._rebuild(text, accepted)
+
+        for span in accepted:
             self._record_mapping(
-                phone_str, dummy_phone, ReplacementCategory.CONTACT_INFO, "Telefon-/Faxnummer"
+                span.original, span.replacement, span.category, span.description
             )
 
-        # 3. General regex for E-Mail addresses
-        for match in self.EMAIL_REGEX.finditer(result):
-            email_str = match.group(0).strip()
-            if not self._is_placeholder_address(email_str):
-                dummy_email = "kontakt@beispiel.invalid"
-                result = result.replace(email_str, dummy_email)
-                self._record_mapping(
-                    email_str, dummy_email, ReplacementCategory.CONTACT_INFO, "E-Mail-Adresse"
-                )
-
-        # 4. Check for any remaining 9-digit practice IKs
-        for p_ik in self.practice_iks:
-            if p_ik in result:
-                pseudo_ik = self.shared_mappings.get(
-                    p_ik, MappingEntry(p_ik, "999000001", ReplacementCategory.PRACTICE_IK)
-                ).pseudonym
-                result = result.replace(p_ik, pseudo_ik)
-                self._record_mapping(
-                    p_ik, pseudo_ik, ReplacementCategory.PRACTICE_IK, "Praxis-IK im Text"
-                )
+        for suspicion in detector.suspicions(text, [(s.start, s.end) for s in accepted]):
+            self._add_suspicion(suspicion, section)
 
         return result
 
-    # Domains, die von py-seudo selbst erzeugt werden und daher nicht erneut
-    # ersetzt werden duerfen. RFC 2606 / RFC 6761 reservieren .invalid und .example
-    # ausdruecklich fuer solche Zwecke.
-    PLACEHOLDER_DOMAINS = frozenset({"beispiel.invalid", "kasse.invalid", "example.com"})
-    PLACEHOLDER_TLDS = (".invalid", ".example", ".test", ".localhost")
+    @staticmethod
+    def _resolve_overlaps(spans: Sequence[_Span]) -> List[_Span]:
+        """Hoechste Prioritaet gewinnt, bei Gleichstand der laengere Bereich."""
+        ordered = sorted(spans, key=lambda s: (-s.priority, -(s.end - s.start), s.start))
+        kept: List[_Span] = []
+        for span in ordered:
+            if span.start >= span.end:
+                continue
+            if any(span.start < k.end and span.end > k.start for k in kept):
+                continue
+            kept.append(span)
+        return sorted(kept, key=lambda s: s.start)
+
+    @staticmethod
+    def _rebuild(text: str, spans: Sequence[_Span]) -> str:
+        out: List[str] = []
+        cursor = 0
+        for span in spans:
+            out.append(text[cursor : span.start])
+            out.append(span.replacement)
+            cursor = span.end
+        out.append(text[cursor:])
+        return "".join(out)
+
+    # ------------------------------------------------------------------
+    # Quellen fuer Ersetzungen
+    # ------------------------------------------------------------------
+
+    def _mapping_spans(self, text: str) -> List[_Span]:
+        """Fundstellen der aus der ESOL-Datei bekannten Werte."""
+        spans: List[_Span] = []
+        # Laengste zuerst, damit "Max Mustermann" vor "Mustermann" greift
+        for orig_key, entry in sorted(
+            self.shared_mappings.items(), key=lambda item: len(item[0]), reverse=True
+        ):
+            if not orig_key or len(orig_key) < 2:
+                continue
+            if orig_key == entry.pseudonym:
+                # Pseudonym gleicht dem Original -- eine Ersetzung waere ein No-Op
+                continue
+
+            pattern = rf"\b{re.escape(orig_key)}\b" if re.match(r"^\w+$", orig_key) else re.escape(orig_key)
+            for m in re.finditer(pattern, text):
+                spans.append(
+                    _Span(
+                        start=m.start(),
+                        end=m.end(),
+                        original=orig_key,
+                        replacement=entry.pseudonym,
+                        category=entry.category,
+                        description=f"E-Mail Ersetzung: {entry.description or orig_key}",
+                        priority=_PRIO_MAPPING,
+                    )
+                )
+        return spans
+
+    def _name_spans(self, text: str, detector: NameDetector) -> List[_Span]:
+        """Personennamen, die nur in der E-Mail vorkommen."""
+        hits = detector.find(text)
+        if not hits:
+            return []
+
+        # Erst Gruppen bilden (Rolle + Nachname), dann Nummern vergeben -- damit
+        # dieselbe Person in Anrede und Signatur dieselbe Nummer bekommt.
+        for hit in hits:
+            key = (hit.role, self._surname_key(hit.text))
+            if hit.salutation and not self._person_gender.get(key):
+                self._person_gender[key] = hit.salutation
+            if key not in self._person_index:
+                self._person_index[key] = self._claim_index(hit)
+
+        spans = []
+        for hit in hits:
+            spans.append(
+                _Span(
+                    start=hit.start,
+                    end=hit.end,
+                    original=hit.text,
+                    replacement=self._pseudonym_for(hit),
+                    category=_ROLE_CATEGORY[hit.role],
+                    description=f"Name aus der E-Mail ({hit.trigger})",
+                    priority=_PRIO_NAME,
+                )
+            )
+        return spans
+
+    def _email_spans(self, text: str) -> List[_Span]:
+        spans = []
+        for m in self.EMAIL_REGEX.finditer(text):
+            address = m.group(0)
+            if self._is_placeholder_address(address):
+                continue
+            spans.append(
+                _Span(
+                    start=m.start(),
+                    end=m.end(),
+                    original=address,
+                    replacement="kontakt@beispiel.invalid",
+                    category=ReplacementCategory.CONTACT_INFO,
+                    description="E-Mail-Adresse",
+                    priority=_PRIO_EMAIL,
+                )
+            )
+        return spans
+
+    def _phone_spans(self, text: str) -> List[_Span]:
+        spans = []
+        for m in self.PHONE_REGEX.finditer(text):
+            raw = m.group(0)
+            stripped = raw.strip()
+            if re.fullmatch(r"\d{9}", stripped) or re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", stripped):
+                continue
+            # Nur den getrimmten Teil ersetzen, damit umgebender Whitespace bleibt
+            offset = m.start() + (len(raw) - len(raw.lstrip()))
+            spans.append(
+                _Span(
+                    start=offset,
+                    end=offset + len(stripped),
+                    original=stripped,
+                    replacement="+49 000 0000000",
+                    category=ReplacementCategory.CONTACT_INFO,
+                    description="Telefon-/Faxnummer",
+                    priority=_PRIO_PHONE,
+                )
+            )
+        return spans
+
+    def _ik_spans(self, text: str) -> List[_Span]:
+        """Praxis-IKs, die im Text stehen, aber kein eigenes Mapping haben."""
+        spans = []
+        for p_ik in self.practice_iks:
+            entry = self.shared_mappings.get(p_ik)
+            pseudo = entry.pseudonym if entry else "999000001"
+            for m in re.finditer(rf"\b{re.escape(p_ik)}\b", text):
+                spans.append(
+                    _Span(
+                        start=m.start(),
+                        end=m.end(),
+                        original=p_ik,
+                        replacement=pseudo,
+                        category=ReplacementCategory.PRACTICE_IK,
+                        description="Praxis-IK im Text",
+                        priority=_PRIO_IK,
+                    )
+                )
+        return spans
+
+    # ------------------------------------------------------------------
+    # Pseudonyme fuer Namen aus der E-Mail
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _surname_key(name: str) -> str:
+        tokens = [t for t in re.split(r"\s+", name.strip()) if t]
+        return tokens[-1].rstrip(".").casefold() if tokens else name.casefold()
+
+    def _highest_used_index(self) -> int:
+        """Hoechste bereits von der ESOL-Seite vergebene Nummer.
+
+        Die E-Mail-Seite zaehlt darueber weiter, damit ``Mustermann_2`` aus der
+        ESOL-Datei und ein neuer Name in der E-Mail nicht dieselbe Nummer
+        bekommen und so zwei Personen zu einer verschmelzen.
+        """
+        highest = 0
+        for entry in self.shared_mappings.values():
+            for match in re.finditer(r"_(\d+)\b", entry.pseudonym):
+                highest = max(highest, int(match.group(1)))
+        return highest
+
+    def _claim_index(self, hit: NameHit) -> int:
+        """Nummer aus einem bestehenden ESOL-Mapping uebernehmen, sonst neue vergeben."""
+        surname = self._surname_key(hit.text)
+        for orig, entry in self.shared_mappings.items():
+            if self._surname_key(orig) == surname:
+                match = re.search(r"_(\d+)\b", entry.pseudonym)
+                if match:
+                    return int(match.group(1))
+        self._person_counter += 1
+        return self._person_counter
+
+    def _pseudonym_for(self, hit: NameHit) -> str:
+        key = (hit.role, self._surname_key(hit.text))
+        idx = self._person_index[key]
+        token_count = len([t for t in re.split(r"\s+", hit.text.strip()) if t])
+
+        if hit.role is NameRole.PATIENT:
+            if token_count >= 2:
+                return f"Max_{idx} Mustermann_{idx}"
+            return f"Mustermann_{idx}"
+        if hit.role is NameRole.DOCTOR:
+            return f"Musterarzt_{idx}"
+        if self._person_gender.get(key) == "f":
+            return f"Sachbearbeiterin_{idx}"
+        return f"Sachbearbeiter_{idx}"
+
+    # ------------------------------------------------------------------
+    # Hilfsfunktionen
+    # ------------------------------------------------------------------
 
     @classmethod
     def _is_placeholder_address(cls, address: str) -> bool:
@@ -220,6 +443,16 @@ class EmailAnonymizer:
         if domain in cls.PLACEHOLDER_DOMAINS:
             return True
         return any(domain == tld.lstrip(".") or domain.endswith(tld) for tld in cls.PLACEHOLDER_TLDS)
+
+    def _add_suspicion(self, suspicion: Suspicion, section: str) -> None:
+        if section:
+            suspicion = Suspicion(
+                text=suspicion.text,
+                line=suspicion.line,
+                reason=f"{suspicion.reason} ({section})",
+            )
+        if not any(s.text == suspicion.text and s.reason == suspicion.reason for s in self.suspicions):
+            self.suspicions.append(suspicion)
 
     def _record_mapping(
         self,

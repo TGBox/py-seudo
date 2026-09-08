@@ -69,6 +69,18 @@ class MappingWidget(QWidget):
         )
         layout.addWidget(self.security_banner)
 
+        # Restrisiko: Stellen, die nach Personenbezug aussehen, aber nicht
+        # ersetzt wurden. Standardmaessig ausgeblendet -- erscheint nur bei Funden.
+        self.suspicion_banner = QLabel()
+        self.suspicion_banner.setObjectName("SuspicionBanner")
+        self.suspicion_banner.setWordWrap(True)
+        self.suspicion_banner.setStyleSheet(
+            "background-color: #7c2d12; color: #fed7aa; padding: 8px 12px; "
+            "border-radius: 6px; font-size: 11px;"
+        )
+        self.suspicion_banner.hide()
+        layout.addWidget(self.suspicion_banner)
+
         # Table
         self.table = QTableWidget()
         self.table.setColumnCount(5)
@@ -99,6 +111,28 @@ class MappingWidget(QWidget):
             f"Ersetzungs-Protokoll: {len(self.all_mappings)} eindeutige Entitäten ({total_rep} Ersetzungen insgesamt)"
         )
         self._populate_table(self.all_mappings)
+        self._show_suspicions(result)
+
+    def _show_suspicions(self, result: AnonymizationResult) -> None:
+        """Restrisiko einblenden -- oder ausblenden, wenn nichts offen ist."""
+        if not result.suspicions:
+            self.suspicion_banner.hide()
+            return
+
+        zeilen = "<br>".join(
+            f"&nbsp;&nbsp;• Zeile {s.line}: <b>{s.text}</b> &mdash; {s.reason}"
+            for s in result.suspicions[:12]
+        )
+        weitere = ""
+        if len(result.suspicions) > 12:
+            weitere = f"<br>&nbsp;&nbsp;… und {len(result.suspicions) - 12} weitere"
+
+        self.suspicion_banner.setText(
+            f"⚠️ <b>Restrisiko: {len(result.suspicions)} Stelle(n) konnten nicht sicher "
+            f"zugeordnet werden.</b> Bitte pruefen Sie diese von Hand, bevor Sie die "
+            f"Dateien weitergeben:<br>{zeilen}{weitere}"
+        )
+        self.suspicion_banner.show()
 
     def _populate_table(self, mappings: List[MappingEntry]) -> None:
         self.table.setRowCount(len(mappings))

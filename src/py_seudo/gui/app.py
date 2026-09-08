@@ -294,9 +294,20 @@ class MainWindow(QMainWindow):
 
             total = result.total_replacements
             unique = len(result.mappings)
-            self.status_bar.showMessage(
-                f"✓ Anonymisierung erfolgreich: {unique} eindeutige Entitäten pseudonymisiert ({total} Gesamtersetzungen)."
+            base = (
+                f"Anonymisierung abgeschlossen: {unique} eindeutige Entitäten "
+                f"pseudonymisiert ({total} Gesamtersetzungen)."
             )
+            if result.suspicions:
+                # Nicht als Erfolg melden, solange etwas offen ist -- und den
+                # Anwender direkt dorthin schicken, wo die Funde stehen.
+                self.status_bar.showMessage(
+                    f"⚠️ {base} {len(result.suspicions)} Stelle(n) konnten nicht sicher "
+                    f"zugeordnet werden – siehe Reiter 'Ersetzungs-Protokoll'."
+                )
+                self.tabs.setCurrentWidget(self.mapping_widget)
+            else:
+                self.status_bar.showMessage(f"✓ {base}")
 
         except Exception as e:
             QMessageBox.critical(self, "Fehler bei der Anonymisierung", f"Fehler aufgetreten:\n{e}")
@@ -304,6 +315,23 @@ class MainWindow(QMainWindow):
     def _save_anonymized_files(self) -> None:
         if not self.current_result:
             return
+
+        # Offene Verdachtsfaelle vor dem Export bestaetigen lassen. Wer die Datei
+        # weitergibt, soll wissen, dass noch etwas ungeklaert ist.
+        if self.current_result.suspicions:
+            anzahl = len(self.current_result.suspicions)
+            reply = QMessageBox.warning(
+                self,
+                "⚠️ Restrisiko vor dem Export",
+                f"An {anzahl} Stelle(n) konnte py-seudo nicht sicher entscheiden, "
+                f"ob ein Personenbezug vorliegt – diese wurden NICHT ersetzt.\n\n"
+                f"Die Liste steht im Reiter 'Ersetzungs-Protokoll & Mappings'.\n\n"
+                f"Trotzdem exportieren?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
 
         target_dir = QFileDialog.getExistingDirectory(
             self, "Zielordner für anonymisierte Dateien auswählen"

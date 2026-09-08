@@ -1,6 +1,6 @@
 """py-seudo: DSGVO-konforme Pseudonymisierung von ESOL-Abrechnungsdateien und Rückmeldungsemails."""
 from py_seudo.engine import PseudoEngine
-from py_seudo.models import AnonymizationResult, MappingEntry, ReplacementCategory
+from py_seudo.models import AnonymizationResult, MappingEntry, ReplacementCategory, Suspicion
 
 __version__ = "0.1.0"
 
@@ -9,5 +9,6 @@ __all__ = [
     "MappingEntry",
     "PseudoEngine",
     "ReplacementCategory",
+    "Suspicion",
     "__version__",
 ]

@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 from py_seudo.edifact.anonymizer import EsolAnonymizer
 from py_seudo.email.anonymizer import EmailAnonymizer
-from py_seudo.models import AnonymizationResult, MappingEntry
+from py_seudo.models import AnonymizationResult, MappingEntry, Suspicion
 
 
 class PseudoEngine:
@@ -55,6 +55,7 @@ class PseudoEngine:
             )
             anon_email_text, email_mappings = email_anon.anonymize()
             result.anonymized_email = anon_email_text
+            result.suspicions = list(email_anon.suspicions)
 
             for m in email_mappings:
                 if m.original in shared_mappings:
