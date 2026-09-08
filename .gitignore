@@ -52,14 +52,13 @@ coverage.xml
 *.spec
 
 # STRICT GDPR DATA PROTECTION / DATENSCHUTZ:
-# Mappings and Sensitive Billing / Audit Exports MUST NEVER be committed!
-*mapping*
-*mappings*
+# Sensitive billing data and mapping audit exports MUST NEVER be committed!
+*mapping*.json
+*mapping*.csv
+*mappings*.json
+*mappings*.csv
+mapping_audit*
 *.secret
-*.mapping.json
-*.mapping.csv
-mapping_audit.json
-mapping_audit.csv
 mappings/
 .py-seudo-mappings/
 exports/
