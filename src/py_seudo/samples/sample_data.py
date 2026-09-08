@@ -1,0 +1,50 @@
+"""Realistic sample datasets for demonstration and automated testing."""
+
+SAMPLE_ESOL = """UNA:+.? '
+UNB+UNOC:3+123456789:2+101575519:2+20240410:1430+ESOL0001++DTA'
+UNH+00001+SLGA:15:0:0'
+FKT+01+123456789+101575519+123456789'
+REC+123456789+RE202400123+20240405'
+UNT+4+00001'
+UNH+00002+SLLA:15:0:0'
+FKT+01+123456789+101575519'
+REC+123456789+RE202400123+20240405'
+INV+RE202400123+00+20240405'
+NAD+FPR+123456789+++Therapiezentrum Sonnenschein+Hauptstrasse 15+Musterhausen++12345+DE'
+NAD+KTR+101575519+++Techniker Krankenkasse'
+NAD+VP+A123456789+++Mustermann+Max+Gartenweg 7+Berlin++10115+DE'
+DTM+102:19820314:102'
+NAD+ARZ+345678901+++Dr. med. Johannes Schmidt'
+BES+987654321+345678901+20240320'
+EHE+9876543210'
+DIA+M54.5'
+ENF+21201+10+45.50'
+UNT+13+00002'
+UNZ+2+ESOL0001'"""
+
+SAMPLE_EMAIL = """From: Techniker Krankenkasse Abrechnungspruefung <abrechnung-fehler@tk.de>
+To: Therapiezentrum Sonnenschein <abrechnung@sonnenschein-therapie.de>
+Date: Thu, 11 Apr 2024 09:15:22 +0200
+Subject: Ablehnung / Fehlerprotokoll Abrechnungsdatei ESOL0001 (IK 123456789)
+Content-Type: text/plain; charset="utf-8"
+
+Sehr geehrte Damen und Herren,
+
+bei der maschinellen Pruefung Ihrer Abrechnungsdatei ESOL0001 zu IK 123456789 wurden formale und inhaltliche Abweisungs-Fehler festgestellt:
+
+Fehlerdetails zu Belegnummer 9876543210 (Rechnung RE202400123):
+- Patient: Max Mustermann, Geb. 14.03.1982, KVNR: A123456789
+- Anschrift: Gartenweg 7, 10115 Berlin
+- Verordnender Arzt: Dr. med. Johannes Schmidt (LANR: 345678901, BSNR: 987654321)
+- Diagnose: M54.5 (Lumbale Rueckenschmerzen)
+- Fehlermeldung: Die Positionsnummer 21201 (Krankengymnastik) ist zur angegebenen Diagnose M54.5 nicht abrechnungsfaehig gemaess Heilmittelkatalog (Paragraph 302 SGB V).
+- Segment: SLLA Zeile 18 (ENF+21201)
+
+Bitte korrigieren Sie den Datensatz in Ihrer Praxissoftware und uebermitteln Sie eine Neulieferung.
+
+Mit freundlichen Gruessen
+Abrechnungsteam TK
+Tel: 040 / 460661000
+Fax: 040 / 460661009
+E-Mail: service-abrechnung@tk.de
+"""
