@@ -85,9 +85,13 @@ class PseudoEngine:
 
     @staticmethod
     def export_audit_mapping_csv(result: AnonymizationResult, target_path: Path) -> None:
-        """Export mapping table to CSV file."""
+        """Export mapping table to CSV file.
+
+        Kodierung ist utf-8-sig: Excel unter Windows erkennt UTF-8 nur an der BOM,
+        sonst werden Umlaute in Namen und Kategorien falsch dargestellt.
+        """
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(target_path, "w", encoding="utf-8", newline="") as f:
+        with open(target_path, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f, delimiter=";")
             writer.writerow(["Original", "Pseudonym", "Kategorie", "Anzahl", "Beschreibung"])
             for m in result.mappings:

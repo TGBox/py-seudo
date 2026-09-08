@@ -57,12 +57,16 @@ def test_export_audit_csv(tmp_path: Path):
     PseudoEngine.export_audit_mapping_csv(result, csv_path)
 
     assert csv_path.exists()
-    with open(csv_path, "r", encoding="utf-8") as f:
+    # utf-8-sig: die Datei traegt eine BOM, damit Excel unter Windows UTF-8 erkennt
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f, delimiter=";")
         rows = list(reader)
         # Header + rows
         assert len(rows) == len(result.mappings) + 1
         assert rows[0] == ["Original", "Pseudonym", "Kategorie", "Anzahl", "Beschreibung"]
+
+    # Die BOM muss tatsaechlich vorhanden sein, sonst zeigt Excel Umlaute falsch
+    assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")
 
 
 def test_empty_inputs():

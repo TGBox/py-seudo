@@ -1,8 +1,6 @@
 """Side-by-side synchronized comparison widget with diff highlighting."""
 from __future__ import annotations
 
-import difflib
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -124,7 +122,6 @@ class DiffWidget(QWidget):
         fmt_changed = QTextCharFormat()
         fmt_changed.setBackground(QColor(16, 185, 129, 45))  # Subtle green
 
-        max_lines = max(len(orig_lines), len(anon_lines))
         for i in range(len(anon_lines)):
             l_orig = orig_lines[i] if i < len(orig_lines) else None
             l_anon = anon_lines[i]

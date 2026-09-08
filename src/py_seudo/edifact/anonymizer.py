@@ -168,7 +168,10 @@ class EsolAnonymizer:
 
             # 1. UNB Segment
             if tag == "UNB":
-                sender_ik = seg.get_element(1, 0)
+                # Achtung: _discover_institutions() normalisiert mit strip(), hier muss
+                # genauso normalisiert werden -- sonst bleibt " 123456789 " im Klartext
+                # stehen, waehrend dieselbe IK in REC/FKT ersetzt wird.
+                sender_ik = seg.get_element(1, 0).strip()
                 if sender_ik in self.practice_iks:
                     pseudo_ik = self._get_or_create_mapping(
                         sender_ik, ReplacementCategory.PRACTICE_IK, "Praxis-IK (UNB Absender)"

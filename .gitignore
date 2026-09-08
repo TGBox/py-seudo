@@ -50,6 +50,8 @@ coverage.xml
 # PyInstaller
 *.manifest
 *.spec
+# ... aber die projekteigene Build-Spezifikation gehoert ins Repository:
+!py-seudo.spec
 
 # STRICT GDPR DATA PROTECTION / DATENSCHUTZ:
 # Sensitive billing data and mapping audit exports MUST NEVER be committed!
@@ -66,3 +68,18 @@ exports/
 *.anon.*
 temp/
 scratch/
+
+# Echte Abrechnungsdaten: NIEMALS committen.
+# Testdateien mit Echtdaten gehoeren ausschliesslich hierhin (lokal, ungetrackt).
+# Synthetische Fixtures fuer die Testsuite liegen unter tests/data/ und sind erlaubt.
+testdata/
+*.esol
+*.edi
+ESOL[0-9]*
+SLLA*
+SLGA*
+*.eml
+*.msg
+# Ausnahme: die synthetischen Fixtures der Testsuite (enthalten keine Echtdaten)
+!tests/data/
+!tests/data/**

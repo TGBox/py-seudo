@@ -1,6 +1,10 @@
 """Tests for ESOL EDIFACT anonymization logic."""
+from pathlib import Path
+
 import pytest
+
 from py_seudo.edifact.anonymizer import EsolAnonymizer
+from py_seudo.edifact.tokenizer import EdifactParser
 from py_seudo.models import ReplacementCategory
 
 
@@ -104,31 +108,75 @@ def test_specified_practice_ik_override():
     assert "999000001" in out_text
 
 
-def test_slla21_heilmittel_file():
-    from pathlib import Path
-    esol_file = Path("testdata/in/ESOL0001")
-    if not esol_file.exists():
-        pytest.skip("testdata/in/ESOL0001 not present")
+SLLA21_FIXTURE = Path(__file__).parent / "data" / "slla21_synthetic.txt"
 
-    text = esol_file.read_text(encoding="latin-1")
-    anon = EsolAnonymizer(text)
-    out_text, mappings = anon.anonymize()
 
-    # Practice IK pseudonymized
-    assert "480512931" not in out_text
-    # Patient name pseudonymized
-    assert "Appenzeller" not in out_text
-    assert "Abel" not in out_text
-    # Birthdate year preserved (2019), month/day standardized to 0615
+@pytest.fixture
+def slla21_text() -> str:
+    """Synthetische SLLA:21-Heilmitteldatei (siehe tests/data/README.md)."""
+    return SLLA21_FIXTURE.read_text(encoding="latin-1")
+
+
+def test_slla21_heilmittel_file(slla21_text: str):
+    """SLLA:21-Layout: Personenbezug raus, Diagnosedaten bleiben."""
+    out_text, mappings = EsolAnonymizer(slla21_text).anonymize()
+
+    # Praxis-IK pseudonymisiert -- in UNB, FKT und REC
+    assert "300000001" not in out_text
+    # Patientenname pseudonymisiert (NAD ohne Qualifier)
+    assert "Testperson" not in out_text
+    assert "Theodor" not in out_text
+    # KVNR aus dem INV-Segment
+    assert "T999888777" not in out_text
+    # Geburtsjahr bleibt (2019), Tag/Monat auf 15.06. normiert
     assert "20190615" in out_text
     assert "20190118" not in out_text
-    # Doctor LANR and BSNR in ZHE pseudonymized
-    assert "242325300" not in out_text
-    assert "963752734" not in out_text
-    # Kassen-IKs preserved
+    # LANR und BSNR aus dem ZHE-Segment
+    assert "111222333" not in out_text
+    assert "444555666" not in out_text
+    # Praxisname und Praxis-E-Mail aus dem NAM-Segment
+    assert "Therapiepraxis Testhausen" not in out_text
+    assert "info@testpraxis.example" not in out_text
+    # Belegnummer aus dem EHE-Segment
+    assert "VO2406110001" not in out_text
+
+    # Kostentraeger-IKs bleiben unveraendert -- sie sind der Diagnosewert
     assert "660510336" in out_text
     assert "104080005" in out_text
-    # Position numbers and diagnosis preserved
-    assert "54103" in out_text
-    assert "R29.2" in out_text
+    # Positionsnummer, Menge, Betrag und Diagnose bleiben bitgenau
+    assert "ENF+54103+1+31.55" in out_text
+    assert "DIA+R29.2" in out_text
+
+
+def test_slla21_struktur_bleibt_erhalten(slla21_text: str):
+    """Die Anonymisierung darf die Segmentstruktur nicht veraendern."""
+    out_text, _ = EsolAnonymizer(slla21_text).anonymize()
+
+    orig_tags = [s.tag for s in EdifactParser(slla21_text).parse_segments()]
+    anon_tags = [s.tag for s in EdifactParser(out_text).parse_segments()]
+    assert orig_tags == anon_tags
+
+    # Gleiche Anzahl Zeilen und gleiche Elementanzahl je Segment
+    orig_segs = EdifactParser(slla21_text).parse_segments()
+    anon_segs = EdifactParser(out_text).parse_segments()
+    for o, a in zip(orig_segs, anon_segs):
+        assert len(o.elements) == len(a.elements), f"Segment {o.tag} hat Elemente verloren"
+
+
+def test_slla21_ist_idempotent(slla21_text: str):
+    """Ein zweiter Lauf ueber den Output darf nichts mehr aendern."""
+    once, _ = EsolAnonymizer(slla21_text).anonymize()
+    twice, _ = EsolAnonymizer(once).anonymize()
+    assert once == twice
+
+
+@pytest.mark.xfail(
+    reason="Bekannte Luecke: der NAM-Handler behandelt nur Element 0 (Name) "
+           "und Element 3 (Kontakt). Strasse und Ort der Praxis laufen durch.",
+    strict=True,
+)
+def test_nam_adresse_wird_anonymisiert(slla21_text: str):
+    out_text, _ = EsolAnonymizer(slla21_text).anonymize()
+    assert "Teststrasse 3" not in out_text
+    assert "55555 Testhausen" not in out_text
 

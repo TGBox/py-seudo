@@ -179,7 +179,7 @@ class EmailAnonymizer:
         # 3. General regex for E-Mail addresses
         for match in self.EMAIL_REGEX.finditer(result):
             email_str = match.group(0).strip()
-            if "invalid" not in email_str and "example.com" not in email_str:
+            if not self._is_placeholder_address(email_str):
                 dummy_email = "kontakt@beispiel.invalid"
                 result = result.replace(email_str, dummy_email)
                 self._record_mapping(
@@ -198,6 +198,28 @@ class EmailAnonymizer:
                 )
 
         return result
+
+    # Domains, die von py-seudo selbst erzeugt werden und daher nicht erneut
+    # ersetzt werden duerfen. RFC 2606 / RFC 6761 reservieren .invalid und .example
+    # ausdruecklich fuer solche Zwecke.
+    PLACEHOLDER_DOMAINS = frozenset({"beispiel.invalid", "kasse.invalid", "example.com"})
+    PLACEHOLDER_TLDS = (".invalid", ".example", ".test", ".localhost")
+
+    @classmethod
+    def _is_placeholder_address(cls, address: str) -> bool:
+        """True, wenn die Adresse bereits ein Platzhalter ist.
+
+        Prueft den Domain-Teil, nicht die ganze Zeichenkette: eine echte Adresse wie
+        ``info@invalid-praxis-mueller.de`` enthaelt zwar das Wort "invalid", ist aber
+        kein Platzhalter und muss ersetzt werden.
+        """
+        _, _, domain = address.rpartition("@")
+        domain = domain.lower().rstrip(".")
+        if not domain:
+            return False
+        if domain in cls.PLACEHOLDER_DOMAINS:
+            return True
+        return any(domain == tld.lstrip(".") or domain.endswith(tld) for tld in cls.PLACEHOLDER_TLDS)
 
     def _record_mapping(
         self,
