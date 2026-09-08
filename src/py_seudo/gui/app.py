@@ -25,7 +25,12 @@ from py_seudo.gui.diff_widget import DiffWidget
 from py_seudo.gui.mapping_widget import MappingWidget
 from py_seudo.gui.theme import DARK_THEME, LIGHT_THEME
 from py_seudo.models import AnonymizationResult
-from py_seudo.samples import SAMPLE_EMAIL, SAMPLE_ESOL
+from py_seudo.samples import (
+    SAMPLE_EMAIL,
+    SAMPLE_EMAIL_REJECTION,
+    SAMPLE_ESOL,
+    SAMPLE_ESOL_WITH_ERRORS,
+)
 
 
 class FileDropBox(QGroupBox):
@@ -153,6 +158,12 @@ class MainWindow(QMainWindow):
         self.demo_btn.clicked.connect(self._load_demo_data)
         header.addWidget(self.demo_btn)
 
+        # Demo Data with Errors Button
+        self.demo_errors_btn = QPushButton("⚠️ Demo mit Fehlern")
+        self.demo_errors_btn.setToolTip("Lädt Testabrechnung mit fehlerhafter IK, KVNR und Belegnummer zur Fehler-Spiegelung")
+        self.demo_errors_btn.clicked.connect(self._load_demo_errors)
+        header.addWidget(self.demo_errors_btn)
+
         # Reset Button
         self.reset_btn = QPushButton("🔄 Zurücksetzen")
         self.reset_btn.clicked.connect(self._reset_all)
@@ -253,6 +264,11 @@ class MainWindow(QMainWindow):
         self.esol_box.set_direct_text("demo_ESOL0001.txt", SAMPLE_ESOL)
         self.email_box.set_direct_text("demo_rueckmeldung.eml", SAMPLE_EMAIL)
         self.status_bar.showMessage("Realistische Beispieldaten geladen. Klicke auf 'Anonymisieren'!")
+
+    def _load_demo_errors(self) -> None:
+        self.esol_box.set_direct_text("demo_ESOL0099_fehler.txt", SAMPLE_ESOL_WITH_ERRORS)
+        self.email_box.set_direct_text("demo_rueckweisung_email.eml", SAMPLE_EMAIL_REJECTION)
+        self.status_bar.showMessage("Beispieldaten mit Abrechnungsfehlern geladen. Klicke auf 'Anonymisieren & Prüfen'!")
 
     def _reset_all(self) -> None:
         self.esol_box.clear()

@@ -58,3 +58,60 @@ Tel: 040 / 460661000
 Fax: 040 / 460661009
 E-Mail: service-abrechnung@tk.de
 """
+
+SAMPLE_ESOL_WITH_ERRORS = """UNA:+.? '
+UNB+UNOC:3+441234568:2+101575519:2+20240502:1015+ESOL0099++DTA'
+UNH+00001+SLGA:15:0:0'
+FKT+01+441234568+101575519+441234568'
+REC+441234568+RE/2024/099+20240428'
+UNT+4+00001'
+UNH+00002+SLLA:15:0:0'
+FKT+01+441234568+101575519'
+REC+441234568+RE/2024/099+20240428'
+INV+RE/2024/099+00+20240428'
+NAD+FPR+441234568+++Praxis Physiotherapie Schulz+Kastanienallee 12+Potsdam++14467+DE'
+NAD+KTR+101575519+++Techniker Krankenkasse'
+NAD+VP+Z987654329+++Becker+Monika+Lindenstrasse 88+Potsdam++14469+DE'
+DTM+102:19681120:102'
+NAD+ARZ+234567890+++Dr. med. Stefan Weber'
+BES+876543210+234567890+20240410'
+EHE+BELEG_DOPPELT_77'
+DIA+M54.4'
+ENF+21201+6+45.50'
+UNT+13+00002'
+UNZ+2+ESOL0099'"""
+
+SAMPLE_EMAIL_REJECTION = """Hallo Herr Becker,
+
+anbei sende ich Ihnen das Abweisungsprotokoll der Techniker Krankenkasse zur Abrechnungsdatei ESOL0099.
+Die Kasse meldet formale Fehler in den Identifikatoren:
+
+From: TK Abrechnungszentrum <rueckweisung@tk.de>
+To: Praxis Schulz <abrechnung@praxis-schulz-potsdam.de>
+Date: Fri, 03 May 2024 08:45:00 +0200
+Subject: Abweisung Abrechnungsdatei ESOL0099 - Formale Fehler in Identifikatoren
+
+Sehr geehrte Damen und Herren,
+
+Ihre Datensendung ESOL0099 konnte nicht verarbeitet werden und wurde maschinell abgewiesen.
+Folgende Abweisungsgründe wurden festgestellt:
+
+1. Institutionskennzeichen (IK): 441234568
+   Fehler: Prüfziffer fehlerhaft (Prüfziffer stimmt nicht mit Modulo-10-Berechnung überein).
+
+2. Versichertennummer (KVNR): Z987654329
+   Patient: Monika Becker, Geb. 20.11.1968
+   Fehler: Prüfziffer ungültig gemäß § 290 SGB V.
+
+3. Rechnungsnummer: RE/2024/099
+   Fehler: Unzulässige Zeichen (Schrägstrich '/' im REC-Segment verletzt Felddefinition).
+
+4. Belegnummer: BELEG_DOPPELT_77
+   Fehler: Doppelabrechnung - Belegnummer wurde bereits mit Rechnung RE202400101 abgerechnet.
+
+Bitte korrigieren Sie die Daten in Ihrem Praxisverwaltungssystem und reichen Sie eine korrigierte Neulieferung ein.
+
+Mit freundlichen Grüßen
+Claudia Richter
+TK Fachzentrum Abrechnung
+"""

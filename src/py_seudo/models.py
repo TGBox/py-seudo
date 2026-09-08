@@ -28,6 +28,8 @@ class MappingEntry:
     category: ReplacementCategory
     count: int = 1
     description: str = ""
+    error_mirrored: bool = False
+    diagnostic_note: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -36,6 +38,8 @@ class MappingEntry:
             "category": self.category.value,
             "count": self.count,
             "description": self.description,
+            "error_mirrored": self.error_mirrored,
+            "diagnostic_note": self.diagnostic_note,
         }
 
 

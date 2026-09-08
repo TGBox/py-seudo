@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from py_seudo.edifact.anonymizer import EsolAnonymizer
 from py_seudo.email.anonymizer import EmailAnonymizer
 from py_seudo.models import AnonymizationResult, MappingEntry, Suspicion
+from py_seudo.validators import RejectionInspector
 
 
 class PseudoEngine:
@@ -31,13 +32,23 @@ class PseudoEngine:
         practice_iks: List[str] = []
         kassen_iks: List[str] = []
 
+        # 0. Pre-inspect rejection email to discover reported errors (checksum, status, duplicates)
+        known_defects: Dict[str, Dict[str, str]] = {}
+        if email_text.strip():
+            known_defects = RejectionInspector.inspect(email_text)
+
         # 1. Process ESOL file first if provided
         if esol_text.strip():
-            esol_anon = EsolAnonymizer(esol_text, specified_practice_ik=self.specified_practice_ik)
+            esol_anon = EsolAnonymizer(
+                esol_text,
+                specified_practice_ik=self.specified_practice_ik,
+                known_defects=known_defects,
+            )
             anon_esol_text, esol_mappings = esol_anon.anonymize()
             result.anonymized_esol = anon_esol_text
             result.practice_iks = list(esol_anon.practice_iks)
             result.kassen_iks = list(esol_anon.kassen_iks)
+            result.suspicions.extend(esol_anon.suspicions)
 
             practice_iks = result.practice_iks
             kassen_iks = result.kassen_iks
@@ -55,11 +66,15 @@ class PseudoEngine:
             )
             anon_email_text, email_mappings = email_anon.anonymize()
             result.anonymized_email = anon_email_text
-            result.suspicions = list(email_anon.suspicions)
+            result.suspicions.extend(email_anon.suspicions)
 
             for m in email_mappings:
                 if m.original in shared_mappings:
                     shared_mappings[m.original].count += m.count
+                    # Preserve error mirroring info if found in email
+                    if m.error_mirrored and not shared_mappings[m.original].error_mirrored:
+                        shared_mappings[m.original].error_mirrored = True
+                        shared_mappings[m.original].diagnostic_note = m.diagnostic_note
                 else:
                     shared_mappings[m.original] = m
 
@@ -79,6 +94,7 @@ class PseudoEngine:
             "practice_iks": result.practice_iks,
             "kassen_iks": result.kassen_iks,
             "total_replacements": result.total_replacements,
+            "total_errors_mirrored": sum(1 for m in result.mappings if m.error_mirrored),
             "mappings": [m.to_dict() for m in result.mappings],
         }
         with open(target_path, "w", encoding="utf-8") as f:
@@ -94,6 +110,22 @@ class PseudoEngine:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         with open(target_path, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f, delimiter=";")
-            writer.writerow(["Original", "Pseudonym", "Kategorie", "Anzahl", "Beschreibung"])
+            writer.writerow([
+                "Original",
+                "Pseudonym",
+                "Kategorie",
+                "Anzahl",
+                "FehlerGespiegelt",
+                "DiagnoseHinweis",
+                "Beschreibung",
+            ])
             for m in result.mappings:
-                writer.writerow([m.original, m.pseudonym, m.category.value, m.count, m.description])
+                writer.writerow([
+                    m.original,
+                    m.pseudonym,
+                    m.category.value,
+                    m.count,
+                    "Ja" if m.error_mirrored else "Nein",
+                    m.diagnostic_note,
+                    m.description,
+                ])

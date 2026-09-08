@@ -63,7 +63,15 @@ def test_export_audit_csv(tmp_path: Path):
         rows = list(reader)
         # Header + rows
         assert len(rows) == len(result.mappings) + 1
-        assert rows[0] == ["Original", "Pseudonym", "Kategorie", "Anzahl", "Beschreibung"]
+        assert rows[0] == [
+            "Original",
+            "Pseudonym",
+            "Kategorie",
+            "Anzahl",
+            "FehlerGespiegelt",
+            "DiagnoseHinweis",
+            "Beschreibung",
+        ]
 
     # Die BOM muss tatsaechlich vorhanden sein, sonst zeigt Excel Umlaute falsch
     assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")

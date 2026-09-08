@@ -23,6 +23,8 @@ class _Span:
     description: str
     #: Hoehere Prioritaet gewinnt bei Ueberschneidung.
     priority: int
+    error_mirrored: bool = False
+    diagnostic_note: str = ""
 
 
 # Prioritaeten: was aus der ESOL-Datei bekannt ist, schlaegt jede Heuristik.
@@ -324,7 +326,12 @@ class EmailAnonymizer:
 
         for span in accepted:
             self._record_mapping(
-                span.original, span.replacement, span.category, span.description
+                span.original,
+                span.replacement,
+                span.category,
+                span.description,
+                error_mirrored=span.error_mirrored,
+                diagnostic_note=span.diagnostic_note,
             )
 
         for suspicion in detector.suspicions(text, [(s.start, s.end) for s in accepted]):
@@ -384,6 +391,8 @@ class EmailAnonymizer:
                         category=entry.category,
                         description=f"E-Mail Ersetzung: {entry.description or orig_key}",
                         priority=_PRIO_MAPPING,
+                        error_mirrored=entry.error_mirrored,
+                        diagnostic_note=entry.diagnostic_note,
                     )
                 )
         return spans
@@ -659,11 +668,17 @@ class EmailAnonymizer:
         category: ReplacementCategory,
         description: str = "",
         count: int = 1,
+        error_mirrored: bool = False,
+        diagnostic_note: str = "",
     ) -> None:
         """Add to list of mappings detected/applied in this email."""
         for existing in self.email_mappings:
             if existing.original == original:
                 existing.count += count
+                if error_mirrored:
+                    existing.error_mirrored = True
+                if diagnostic_note and not existing.diagnostic_note:
+                    existing.diagnostic_note = diagnostic_note
                 return
 
         self.email_mappings.append(
@@ -673,5 +688,7 @@ class EmailAnonymizer:
                 category=category,
                 count=count,
                 description=description,
+                error_mirrored=error_mirrored,
+                diagnostic_note=diagnostic_note,
             )
         )

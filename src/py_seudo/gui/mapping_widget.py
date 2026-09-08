@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -83,19 +84,21 @@ class MappingWidget(QWidget):
 
         # Table
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
+        self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels([
             "Kategorie",
             "Original (Sensibel)",
             "Pseudonym (Ersetzt)",
             "Anzahl",
+            "Fehler-Spiegelung",
             "Details / Fundstelle",
         ])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
 
@@ -107,9 +110,15 @@ class MappingWidget(QWidget):
         self.export_btn.setEnabled(len(self.all_mappings) > 0)
 
         total_rep = result.total_replacements
-        self.summary_label.setText(
-            f"Ersetzungs-Protokoll: {len(self.all_mappings)} eindeutige Entitäten ({total_rep} Ersetzungen insgesamt)"
-        )
+        total_errors = sum(1 for m in self.all_mappings if m.error_mirrored)
+        if total_errors > 0:
+            self.summary_label.setText(
+                f"Ersetzungs-Protokoll: {len(self.all_mappings)} Entitäten ({total_rep} Ersetzungen, ⚠️ {total_errors} Fehler gespiegelt)"
+            )
+        else:
+            self.summary_label.setText(
+                f"Ersetzungs-Protokoll: {len(self.all_mappings)} eindeutige Entitäten ({total_rep} Ersetzungen insgesamt)"
+            )
         self._populate_table(self.all_mappings)
         self._show_suspicions(result)
 
@@ -154,15 +163,32 @@ class MappingWidget(QWidget):
             count_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             count_item.setFlags(count_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
 
+            # Error mirroring status badge
+            if entry.error_mirrored:
+                status_item = QTableWidgetItem("⚠️ Gespiegelt")
+                status_item.setForeground(QColor("#f97316"))
+                status_item.setToolTip(entry.diagnostic_note or "Fehlerhafter Wert wurde gespiegelt")
+            else:
+                status_item = QTableWidgetItem("✓ Valide")
+                status_item.setForeground(QColor("#22c55e"))
+                status_item.setToolTip("Syntaktisch und mathematisch valider Pseudowert")
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            status_item.setFlags(status_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+
             # Description
-            desc_item = QTableWidgetItem(entry.description)
+            desc_text = entry.description
+            if entry.error_mirrored and entry.diagnostic_note and entry.diagnostic_note not in desc_text:
+                desc_text = f"{desc_text} ({entry.diagnostic_note})" if desc_text else entry.diagnostic_note
+            desc_item = QTableWidgetItem(desc_text)
+            desc_item.setToolTip(entry.diagnostic_note if entry.error_mirrored else "")
             desc_item.setFlags(desc_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
 
             self.table.setItem(row, 0, cat_item)
             self.table.setItem(row, 1, orig_item)
             self.table.setItem(row, 2, pseudo_item)
             self.table.setItem(row, 3, count_item)
-            self.table.setItem(row, 4, desc_item)
+            self.table.setItem(row, 4, status_item)
+            self.table.setItem(row, 5, desc_item)
 
     def _filter_mappings(self, filter_text: str) -> None:
         q = filter_text.strip().lower()
@@ -177,6 +203,9 @@ class MappingWidget(QWidget):
             or q in m.pseudonym.lower()
             or q in m.category.value.lower()
             or q in m.description.lower()
+            or q in m.diagnostic_note.lower()
+            or (q in "gespiegelt fehler" and m.error_mirrored)
+            or (q in "valide" and not m.error_mirrored)
         ]
         self._populate_table(filtered)
 

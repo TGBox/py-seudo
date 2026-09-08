@@ -5,7 +5,14 @@ import re
 from typing import Dict, List, Optional, Set, Tuple
 
 from py_seudo.edifact.tokenizer import EdifactParser, EdifactSegment, serialize_segments
-from py_seudo.models import MappingEntry, ReplacementCategory
+from py_seudo.models import MappingEntry, ReplacementCategory, Suspicion
+from py_seudo.validators import (
+    generate_mirrored_ik,
+    generate_mirrored_kvnr,
+    mirror_invoice_defect,
+    validate_ik,
+    validate_kvnr,
+)
 
 
 class EsolAnonymizer:
@@ -14,9 +21,15 @@ class EsolAnonymizer:
     and technical error-diagnostic data (Kassen-IK, diagnoses, position numbers).
     """
 
-    def __init__(self, raw_edifact: str, specified_practice_ik: Optional[str] = None):
+    def __init__(
+        self,
+        raw_edifact: str,
+        specified_practice_ik: Optional[str] = None,
+        known_defects: Optional[Dict[str, Dict[str, str]]] = None,
+    ):
         self.raw_edifact = raw_edifact
         self.specified_practice_ik = specified_practice_ik
+        self.known_defects = dict(known_defects or {})
         self.parser = EdifactParser(raw_edifact)
         self.segments = self.parser.parse_segments()
 
@@ -24,6 +37,7 @@ class EsolAnonymizer:
         self.practice_iks: Set[str] = set()
         self.kassen_iks: Set[str] = set()
         self.detected_entities: Dict[str, MappingEntry] = {}
+        self.suspicions: List[Suspicion] = []
 
         # Counters for generating consistent pseudonyms
         self._patient_counter = 0
@@ -40,18 +54,27 @@ class EsolAnonymizer:
         if self.specified_practice_ik:
             self.practice_iks.add(self.specified_practice_ik.strip())
 
-        for seg in self.segments:
+        for idx, seg in enumerate(self.segments):
             tag = seg.tag
 
             # UNB segment: UNB+UNOC:3+SenderIK:Qual+ReceiverIK:Qual+...
             if tag == "UNB":
                 sender_ik = seg.get_element(1, 0).strip()
                 receiver_ik = seg.get_element(2, 0).strip()
-                if sender_ik and re.match(r"^\d{9}$", sender_ik):
+                if sender_ik and re.match(r"^[A-Za-z0-9]{6,14}$", sender_ik):
                     if not self.specified_practice_ik:
                         self.practice_iks.add(sender_ik)
-                if receiver_ik and re.match(r"^\d{9}$", receiver_ik):
+                if receiver_ik and re.match(r"^[A-Za-z0-9]{6,14}$", receiver_ik):
                     self.kassen_iks.add(receiver_ik)
+                    is_val, err_code, exp_cd = validate_ik(receiver_ik)
+                    if not is_val:
+                        self.suspicions.append(
+                            Suspicion(
+                                text=receiver_ik,
+                                line=idx + 1,
+                                reason=f"Kostenträger-IK (Empfänger UNB) hat Prüfziffern-/Formatfehler: {err_code}",
+                            )
+                        )
 
             # NAD segment
             elif tag == "NAD":
@@ -59,12 +82,21 @@ class EsolAnonymizer:
                 ik_or_id = seg.get_element(1, 0).strip()
 
                 if qual in ("FPR", "LE", "LBO"):
-                    if ik_or_id and re.match(r"^\d{9}$", ik_or_id):
+                    if ik_or_id and re.match(r"^[A-Za-z0-9]{6,14}$", ik_or_id):
                         self.practice_iks.add(ik_or_id)
 
                 elif qual in ("KTR", "KK"):
-                    if ik_or_id and re.match(r"^\d{9}$", ik_or_id):
+                    if ik_or_id and re.match(r"^[A-Za-z0-9]{6,14}$", ik_or_id):
                         self.kassen_iks.add(ik_or_id)
+                        is_val, err_code, exp_cd = validate_ik(ik_or_id)
+                        if not is_val:
+                            self.suspicions.append(
+                                Suspicion(
+                                    text=ik_or_id,
+                                    line=idx + 1,
+                                    reason=f"Kostenträger-IK (NAD+KTR) hat Prüfziffern-/Formatfehler: {err_code}",
+                                )
+                            )
 
             # FKT segment
             elif tag == "FKT":
@@ -74,13 +106,13 @@ class EsolAnonymizer:
                 ik_pos2 = seg.get_element(2, 0).strip()
                 ik_pos3 = seg.get_element(3, 0).strip()
 
-                if ik_pos1 and re.match(r"^\d{9}$", ik_pos1):
+                if ik_pos1 and re.match(r"^[A-Za-z0-9]{6,14}$", ik_pos1):
                     self.practice_iks.add(ik_pos1)
-                    if ik_pos2 and re.match(r"^\d{9}$", ik_pos2):
+                    if ik_pos2 and re.match(r"^[A-Za-z0-9]{6,14}$", ik_pos2):
                         self.kassen_iks.add(ik_pos2)
-                elif not ik_pos1 and ik_pos2 and re.match(r"^\d{9}$", ik_pos2):
+                elif not ik_pos1 and ik_pos2 and re.match(r"^[A-Za-z0-9]{6,14}$", ik_pos2):
                     self.practice_iks.add(ik_pos2)
-                    if ik_pos3 and re.match(r"^\d{9}$", ik_pos3):
+                    if ik_pos3 and re.match(r"^[A-Za-z0-9]{6,14}$", ik_pos3):
                         self.kassen_iks.add(ik_pos3)
 
         for p_ik in self.practice_iks:
@@ -88,9 +120,15 @@ class EsolAnonymizer:
                 self.kassen_iks.remove(p_ik)
 
     def _get_or_create_mapping(
-        self, original: str, category: ReplacementCategory, description: str = ""
+        self,
+        original: str,
+        category: ReplacementCategory,
+        description: str = "",
+        force_error: Optional[str] = None,
+        diagnostic_override: str = "",
+        prefix_default: str = "RE",
     ) -> str:
-        """Retrieve existing pseudonym or generate a new syntactically valid one."""
+        """Retrieve existing pseudonym or generate a new (possibly defect-mirrored) one."""
         if not original:
             return ""
 
@@ -100,64 +138,107 @@ class EsolAnonymizer:
             entry.count += 1
             return entry.pseudonym
 
-        pseudonym = self._generate_pseudonym(orig_clean, category)
+        pseudonym, is_mirrored, note = self._generate_pseudonym(
+            orig_clean,
+            category,
+            force_error=force_error,
+            diagnostic_override=diagnostic_override,
+            prefix_default=prefix_default,
+        )
+        desc = description
+        if is_mirrored and note:
+            desc = f"{description} [{note}]" if description else note
+
         self.detected_entities[orig_clean] = MappingEntry(
             original=orig_clean,
             pseudonym=pseudonym,
             category=category,
             count=1,
-            description=description,
+            description=desc,
+            error_mirrored=is_mirrored,
+            diagnostic_note=note,
         )
         return pseudonym
 
-    def _generate_pseudonym(self, orig: str, category: ReplacementCategory) -> str:
-        """Generate syntactically compliant dummy values."""
+    def _generate_pseudonym(
+        self,
+        orig: str,
+        category: ReplacementCategory,
+        force_error: Optional[str] = None,
+        diagnostic_override: str = "",
+        prefix_default: str = "RE",
+    ) -> Tuple[str, bool, str]:
+        """Generate syntactically compliant or defect-mirrored dummy values."""
+        defect_info = self.known_defects.get(orig, {})
+        f_err = force_error or defect_info.get("error_type")
+        diag_ovr = diagnostic_override or defect_info.get("diagnostic_note", "")
+
         if category == ReplacementCategory.PRACTICE_IK:
             self._practice_counter += 1
-            return f"999{self._practice_counter:06d}"
+            return generate_mirrored_ik(
+                orig,
+                self._practice_counter,
+                force_error=f_err,
+                diagnostic_override=diag_ovr,
+            )
 
         elif category == ReplacementCategory.KVNR:
             self._patient_counter += 1
-            return f"X{self._patient_counter:09d}"
+            return generate_mirrored_kvnr(
+                orig,
+                self._patient_counter,
+                force_error=f_err,
+                diagnostic_override=diag_ovr,
+            )
+
+        elif category == ReplacementCategory.INVOICE_NUMBER:
+            if prefix_default == "BELEG" or orig.startswith("BELEG"):
+                self._recipe_counter += 1
+                ctr = self._recipe_counter
+            else:
+                self._invoice_counter += 1
+                ctr = self._invoice_counter
+
+            return mirror_invoice_defect(
+                orig,
+                ctr,
+                prefix_default=prefix_default,
+                force_error=f_err,
+                diagnostic_override=diag_ovr,
+            )
 
         elif category == ReplacementCategory.PATIENT_NAME:
             self._patient_counter = max(self._patient_counter, 1)
             num = self._patient_counter
             if " " in orig or "," in orig:
-                return f"Mustermann_{num}, Max_{num}"
-            return f"Patient_{num}"
+                return f"Mustermann_{num}, Max_{num}", False, ""
+            return f"Patient_{num}", False, ""
 
         elif category == ReplacementCategory.BIRTHDATE:
             if re.match(r"^\d{8}$", orig):
                 year = orig[:4]
-                return f"{year}0615"
+                return f"{year}0615", False, ""
             elif re.match(r"^\d{2}\.\d{2}\.\d{4}$", orig):
                 year = orig[-4:]
-                return f"15.06.{year}"
-            return orig
+                return f"15.06.{year}", False, ""
+            return orig, False, ""
 
         elif category == ReplacementCategory.DOCTOR_NAME:
             self._doctor_counter += 1
-            return f"Dr. med. Musterarzt_{self._doctor_counter}"
+            return f"Dr. med. Musterarzt_{self._doctor_counter}", False, ""
 
         elif category == ReplacementCategory.DOCTOR_LANR:
             self._doctor_counter = max(self._doctor_counter, 1)
-            return f"888{self._doctor_counter:06d}"
+            return f"888{self._doctor_counter:06d}", False, ""
 
         elif category == ReplacementCategory.DOCTOR_BSNR:
             self._doctor_counter = max(self._doctor_counter, 1)
-            return f"777{self._doctor_counter:06d}"
-
-        elif category == ReplacementCategory.INVOICE_NUMBER:
-            self._invoice_counter += 1
-            prefix_match = re.match(r"^([A-Za-z_-]+)", orig)
-            prefix = prefix_match.group(1) if prefix_match else "RE"
-            return f"{prefix}999{self._invoice_counter:04d}"
+            return f"777{self._doctor_counter:06d}", False, ""
 
         elif category == ReplacementCategory.ADDRESS:
-            return "Musterstrasse 42"
+            return "Musterstrasse 42", False, ""
 
-        return f"ANON_{orig}"
+        return f"ANON_{orig}", False, ""
 
     def anonymize(self) -> Tuple[str, List[MappingEntry]]:
         """Run anonymization over all parsed segments."""
@@ -570,14 +651,11 @@ class EsolAnonymizer:
             elif tag == "EHE":
                 belegnr = seg.get_element(0, 0)
                 if belegnr and len(belegnr) >= 4:
-                    self._recipe_counter += 1
-                    pseudo_ehe = f"BELEG999{self._recipe_counter:04d}"
-                    self.detected_entities[belegnr] = MappingEntry(
-                        original=belegnr,
-                        pseudonym=pseudo_ehe,
-                        category=ReplacementCategory.INVOICE_NUMBER,
-                        count=1,
-                        description="Verordnungs-/Belegnummer (EHE)",
+                    pseudo_ehe = self._get_or_create_mapping(
+                        belegnr,
+                        ReplacementCategory.INVOICE_NUMBER,
+                        "Verordnungs-/Belegnummer (EHE)",
+                        prefix_default="BELEG",
                     )
                     seg.set_element(0, pseudo_ehe, 0)
 
