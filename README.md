@@ -1,5 +1,10 @@
 # py-seudo 🛡️ (v1.0.0)
 
+[![Automated Tests & CI](https://github.com/TGBox/py-seudo/actions/workflows/test.yml/badge.svg)](https://github.com/TGBox/py-seudo/actions/workflows/test.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-114%20passed-success.svg)](https://github.com/TGBox/py-seudo)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)](https://github.com/TGBox/py-seudo)
+
 > **DSGVO-konforme Pseudonymisierung von ESOL-Abrechnungsdateien (§ 302 SGB V) und Kassen-Rückmeldungs-E-Mails für Heil- und Hilfsmittelerbringer mit intelligenter Fehler-Spiegelung und manuellen Korrekturmöglichkeiten.**
 
 `py-seudo` ist eine moderne Windows-Desktop-Applikation (PySide6 mit Dark/Light-Mode), mit der Sie fehlerhafte Abrechnungsdateien (ESOL/EDIFACT) und die zugehörigen Rückweisungsemails von Krankenkassen und Abrechnungszentren (z. B. Syntela, TK, Barmer, AOK, Emmendingen, DMRZ) sicher und vollständig anonymisieren können – **ohne dass der technische Kontext für die Fehleranalyse und Fehlerbehebung verloren geht**.
