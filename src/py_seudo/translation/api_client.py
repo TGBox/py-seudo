@@ -39,7 +39,7 @@ def build_user_prompt(result: AnonymizationResult) -> str:
 
     mirrored = [m for m in result.mappings if m.error_mirrored]
     if mirrored:
-        err_lines = [f"• {m.category.value}: {m.diagnostic_note}" for m in mirrored]
+        err_lines = [f"• {m.category.value if hasattr(m.category, 'value') else m.category}: {m.diagnostic_note}" for m in mirrored]
         parts.append(f"--- DETECTED / MIRRORED DEFECTS ---\n" + "\n".join(err_lines))
 
     return "\n\n".join(parts)

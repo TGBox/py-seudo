@@ -138,7 +138,7 @@ class PseudoEngine:
                 writer.writerow([
                     m.original,
                     m.pseudonym,
-                    m.category.value,
+                    m.category.value if hasattr(m.category, "value") else str(m.category),
                     m.count,
                     "Ja" if m.error_mirrored else "Nein",
                     m.diagnostic_note,

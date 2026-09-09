@@ -196,8 +196,9 @@ class LocalReportGenerator:
             lines.append("")
             lines.append("Key Issues Identified:")
             for idx, m in enumerate(mirrored_errors, 1):
-                note_en = cls._translate_diagnostic_note(m.diagnostic_note, m.category.value)
-                lines.append(f"  {idx}. [{m.category.value.upper()}]")
+                cat_val = m.category.value if hasattr(m.category, "value") else str(m.category)
+                note_en = cls._translate_diagnostic_note(m.diagnostic_note, cat_val)
+                lines.append(f"  {idx}. [{cat_val.upper()}]")
                 lines.append(f"     • Replicated Defect:   {note_en}")
                 if m.description:
                     lines.append(f"     • Technical Impact:    {m.description}")

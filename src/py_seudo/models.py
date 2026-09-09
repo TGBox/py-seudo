@@ -32,11 +32,25 @@ class MappingEntry:
     diagnostic_note: str = ""
     is_manual: bool = False
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.category, ReplacementCategory):
+            if isinstance(self.category, str):
+                try:
+                    self.category = ReplacementCategory(self.category)
+                except ValueError:
+                    try:
+                        self.category = ReplacementCategory[self.category]
+                    except KeyError:
+                        self.category = ReplacementCategory.OTHER
+            else:
+                self.category = ReplacementCategory.OTHER
+
     def to_dict(self) -> Dict[str, Any]:
+        cat_val = self.category.value if isinstance(self.category, ReplacementCategory) else str(self.category)
         return {
             "original": self.original,
             "pseudonym": self.pseudonym,
-            "category": self.category.value,
+            "category": cat_val,
             "count": self.count,
             "description": self.description,
             "error_mirrored": self.error_mirrored,
@@ -86,7 +100,7 @@ class AnonymizationResult:
     def get_mappings_by_category(self) -> Dict[str, List[MappingEntry]]:
         result: Dict[str, List[MappingEntry]] = {}
         for m in self.mappings:
-            cat = m.category.value
+            cat = m.category.value if isinstance(m.category, ReplacementCategory) else str(m.category)
             if cat not in result:
                 result[cat] = []
             result[cat].append(m)

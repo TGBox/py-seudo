@@ -99,7 +99,7 @@ def test_add_custom_replacement_dialog_and_propagation(qapp):
 
 
 def test_add_mapping_dialog_validation(qapp):
-    """AddMappingDialog validates input and constructs valid MappingEntry."""
+    """AddMappingDialog validates input and constructs valid MappingEntry with ReplacementCategory enum."""
     dlg = AddMappingDialog()
     assert dlg.windowTitle() != ""
 
@@ -115,6 +115,63 @@ def test_add_mapping_dialog_validation(qapp):
     assert entry.original == "Sensible Angabe"
     assert entry.pseudonym == "Anonyme Angabe"
     assert entry.is_manual is True
+    assert isinstance(entry.category, ReplacementCategory)
+    assert hasattr(entry.category, "value")
+
+
+def test_add_mapping_dialog_workflow_integration(qapp):
+    """Adding a custom mapping via AddMappingDialog.get_entry() populates table without error."""
+    window = MainWindow()
+    window._load_demo_data()
+    window._run_anonymization()
+
+    dlg = AddMappingDialog()
+    dlg.orig_edit.setText("Dr. Johannes Schmidt")
+    dlg.pseudo_edit.setText("Dr. med. Musterarzt_99")
+    entry = dlg.get_entry()
+    assert isinstance(entry.category, ReplacementCategory)
+
+    # This previously raised AttributeError: 'str' object has no attribute 'value'
+    window.mapping_widget.mapping_added.emit(entry)
+
+    # Verify presence in table
+    table = window.mapping_widget.table
+    found = False
+    for r in range(table.rowCount()):
+        orig_item = table.item(r, 1)
+        if orig_item and orig_item.text() == "Dr. Johannes Schmidt":
+            cat_item = table.item(r, 0)
+            assert cat_item.text() == entry.category.value
+            found = True
+            break
+    assert found
+
+
+def test_mapping_entry_normalizes_string_category():
+    """MappingEntry converts string categories (both values and enum names) to ReplacementCategory."""
+    entry_val = MappingEntry(
+        original="Test",
+        pseudonym="Pseudo",
+        category="Patientenname",  # type: ignore
+    )
+    assert isinstance(entry_val.category, ReplacementCategory)
+    assert entry_val.category == ReplacementCategory.PATIENT_NAME
+
+    entry_name = MappingEntry(
+        original="Test",
+        pseudonym="Pseudo",
+        category="PATIENT_NAME",  # type: ignore
+    )
+    assert isinstance(entry_name.category, ReplacementCategory)
+    assert entry_name.category == ReplacementCategory.PATIENT_NAME
+
+    entry_unknown = MappingEntry(
+        original="Test",
+        pseudonym="Pseudo",
+        category="Unbekannt",  # type: ignore
+    )
+    assert isinstance(entry_unknown.category, ReplacementCategory)
+    assert entry_unknown.category == ReplacementCategory.OTHER
 
 
 def test_direct_preview_pane_editing_and_save(qapp, tmp_path: Path):

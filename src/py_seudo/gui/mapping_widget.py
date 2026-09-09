@@ -88,7 +88,20 @@ class AddMappingDialog(QDialog):
         self.accept()
 
     def get_entry(self) -> MappingEntry:
-        cat = self.cat_combo.currentData()
+        data = self.cat_combo.currentData()
+        if isinstance(data, ReplacementCategory):
+            cat = data
+        elif isinstance(data, str):
+            try:
+                cat = ReplacementCategory(data)
+            except ValueError:
+                try:
+                    cat = ReplacementCategory[data]
+                except KeyError:
+                    cat = ReplacementCategory.OTHER
+        else:
+            cat = ReplacementCategory.OTHER
+
         return MappingEntry(
             original=self.orig_edit.text().strip(),
             pseudonym=self.pseudo_edit.text().strip(),
@@ -246,7 +259,8 @@ class MappingWidget(QWidget):
             self.table.setRowCount(len(mappings))
             for row, entry in enumerate(mappings):
                 # Category
-                cat_item = QTableWidgetItem(entry.category.value)
+                cat_val = entry.category.value if isinstance(entry.category, ReplacementCategory) else str(entry.category)
+                cat_item = QTableWidgetItem(cat_val)
                 cat_item.setFlags(cat_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
                 # Original
@@ -359,7 +373,7 @@ class MappingWidget(QWidget):
             for m in self.all_mappings
             if q in m.original.lower()
             or q in m.pseudonym.lower()
-            or q in m.category.value.lower()
+            or q in (m.category.value if isinstance(m.category, ReplacementCategory) else str(m.category)).lower()
             or q in m.description.lower()
             or q in m.diagnostic_note.lower()
             or (q in "gespiegelt fehler" and m.error_mirrored)
