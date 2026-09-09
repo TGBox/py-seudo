@@ -2,8 +2,8 @@
 
 
 a = Analysis(
-    ['C:/Users/DaniBani/Documents/VisualStudioCodeProjects/py-seudo/src/py_seudo/main.py'],
-    pathex=['C:/Users/DaniBani/Documents/VisualStudioCodeProjects/py-seudo/src'],
+    ['C:/Users/droesch/Documents/Programmiertes/py-seudo/src/py_seudo/main.py'],
+    pathex=['C:/Users/droesch/Documents/Programmiertes/py-seudo/src'],
     binaries=[],
     datas=[],
     hiddenimports=[],
