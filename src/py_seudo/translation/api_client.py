@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Dict, Tuple
 
@@ -10,6 +13,67 @@ from py_seudo.models import AnonymizationResult
 from py_seudo.translation.local_generator import LocalReportGenerator
 from py_seudo.translation.models import TranslationProvider, TranslationSettings
 from py_seudo.verify import UnresolvedSuspicions, _dedupe, prompt_findings
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_MODEL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
+DEFAULT_OPENAI_BASE = "https://api.openai.com/v1"
+GEMINI_HOST = "generativelanguage.googleapis.com"
+CLAUDE_HOST = "api.anthropic.com"
+
+
+def cloud_disabled() -> bool:
+    """Organisationsweite Abschaltung externer KI-Anbieter.
+
+    Gesetzt ueber die Umgebungsvariable ``PY_SEUDO_DISABLE_CLOUD=1`` (z. B. per
+    Gruppenrichtlinie). Dann bietet die Oberflaeche nur den lokalen Generator an,
+    und jeder Aufruf eines externen Dienstes wird abgelehnt.
+    """
+    return os.environ.get("PY_SEUDO_DISABLE_CLOUD", "").strip().lower() in {"1", "true", "yes", "ja"}
+
+
+def validate_base_url(url: str) -> str:
+    """HTTPS erzwingen -- unverschluesselt nur zu einem Dienst auf diesem Rechner."""
+    url = (url or "").strip().rstrip("/") or DEFAULT_OPENAI_BASE
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError(f"Ungültige Basis-URL: {url!r}")
+    if parsed.scheme == "https":
+        return url
+    if parsed.scheme == "http" and host in _LOCAL_HOSTS:
+        return url
+    raise ValueError(
+        "Die Basis-URL muss https:// verwenden. Unverschlüsseltes http:// ist nur "
+        "für einen lokalen Dienst (localhost / 127.0.0.1) erlaubt."
+    )
+
+
+def validate_model(model: str) -> str:
+    model = (model or "").strip()
+    if not _MODEL_RE.fullmatch(model):
+        raise ValueError(f"Ungültiger Modellname: {model!r}")
+    return model
+
+
+def describe_target(settings: TranslationSettings) -> str:
+    """Zielserver fuer die Bestaetigung vor dem Versand."""
+    provider = settings.provider
+    if provider == TranslationProvider.OPENAI:
+        host = urllib.parse.urlparse(validate_base_url(settings.openai_base_url)).hostname
+        return f"{host} (Modell {settings.openai_model or 'gpt-4o-mini'})"
+    if provider == TranslationProvider.GEMINI:
+        return f"{GEMINI_HOST} (Modell {settings.gemini_model or 'gemini-1.5-flash'})"
+    if provider == TranslationProvider.CLAUDE:
+        return f"{CLAUDE_HOST} (Modell {settings.claude_model or 'claude-3-5-haiku-20241022'})"
+    return "lokal (keine Übertragung)"
+
+
+def _ensure_cloud_allowed() -> None:
+    if cloud_disabled():
+        raise RuntimeError(
+            "Externe KI-Anbieter sind per Richtlinie deaktiviert (PY_SEUDO_DISABLE_CLOUD)."
+        )
+
 
 SYSTEM_PROMPT = """You are an expert technical writer and German healthcare billing (§ 302 SGB V) specialist.
 Your task is to generate a clean, professional English developer handover report in text format for foreign software developers.
@@ -48,10 +112,10 @@ def build_user_prompt(result: AnonymizationResult) -> str:
 
 def call_openai_api(settings: TranslationSettings, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
     """Call OpenAI or OpenAI-compatible endpoint (e.g. Ollama, LocalAI)."""
+    _ensure_cloud_allowed()
     api_key = settings.openai_api_key.strip()
-    model = settings.openai_model.strip() or "gpt-4o-mini"
-    base_url = settings.openai_base_url.strip() or "https://api.openai.com/v1"
-    base_url = base_url.rstrip("/")
+    model = validate_model(settings.openai_model.strip() or "gpt-4o-mini")
+    base_url = validate_base_url(settings.openai_base_url)
     endpoint = f"{base_url}/chat/completions"
 
     headers = {
@@ -89,14 +153,16 @@ def call_openai_api(settings: TranslationSettings, prompt: str, system_prompt: s
 
 def call_gemini_api(settings: TranslationSettings, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
     """Call Google Gemini generateContent REST API."""
+    _ensure_cloud_allowed()
     api_key = settings.gemini_api_key.strip()
     if not api_key:
         raise ValueError("Google Gemini API-Key is missing.")
 
-    model = settings.gemini_model.strip() or "gemini-1.5-flash"
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    model = validate_model(settings.gemini_model.strip() or "gemini-1.5-flash")
+    # Schluessel im Header statt in der URL -- URLs landen in Proxy-/Firewall-Logs.
+    endpoint = f"https://{GEMINI_HOST}/v1beta/models/{model}:generateContent"
 
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
     full_text = f"{system_prompt}\n\nTask:\n{prompt}"
     payload = {
         "contents": [
@@ -131,12 +197,13 @@ def call_gemini_api(settings: TranslationSettings, prompt: str, system_prompt: s
 
 def call_claude_api(settings: TranslationSettings, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
     """Call Anthropic Claude messages REST API."""
+    _ensure_cloud_allowed()
     api_key = settings.claude_api_key.strip()
     if not api_key:
         raise ValueError("Anthropic Claude API-Key is missing.")
 
-    model = settings.claude_model.strip() or "claude-3-5-haiku-20241022"
-    endpoint = "https://api.anthropic.com/v1/messages"
+    model = validate_model(settings.claude_model.strip() or "claude-3-5-haiku-20241022")
+    endpoint = f"https://{CLAUDE_HOST}/v1/messages"
 
     headers = {
         "Content-Type": "application/json",
@@ -192,20 +259,25 @@ def check_api_connection(provider: TranslationProvider, settings: TranslationSet
         return False, str(e)
 
 
+def ensure_prompt_allowed(result: AnonymizationResult, prompt: str) -> None:
+    """Nichts an externe Dienste schicken, solange irgendwo ein Verdachtsfall
+    offen ist oder der Prompt selbst verdaechtige Stellen enthaelt."""
+    findings = _dedupe(list(result.suspicions) + prompt_findings(prompt, result))
+    if findings:
+        raise UnresolvedSuspicions(findings)
+
+
 def generate_developer_report(result: AnonymizationResult, settings: TranslationSettings) -> str:
     """Generate the developer handover report using the configured provider."""
     if settings.provider == TranslationProvider.LOCAL:
         return LocalReportGenerator.generate_report(result)
 
+    _ensure_cloud_allowed()
     user_prompt = build_user_prompt(result)
     if not user_prompt.strip():
         return LocalReportGenerator.generate_report(result)
 
-    # Nichts an externe Dienste schicken, solange irgendwo ein Verdachtsfall
-    # offen ist oder der Prompt selbst verdaechtige Stellen enthaelt.
-    findings = _dedupe(list(result.suspicions) + prompt_findings(user_prompt, result))
-    if findings:
-        raise UnresolvedSuspicions(findings)
+    ensure_prompt_allowed(result, user_prompt)
 
     if settings.provider == TranslationProvider.OPENAI:
         return call_openai_api(settings, user_prompt)

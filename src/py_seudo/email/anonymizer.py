@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from py_seudo.email.names import NameDetector, NameHit, NameRole
 from py_seudo.models import MappingEntry, ReplacementCategory, Suspicion
+from py_seudo.validators import generate_mirrored_kvnr
 
 
 @dataclass(frozen=True)
@@ -31,8 +32,18 @@ class _Span:
 _PRIO_MAPPING = 40
 _PRIO_NAME = 30
 _PRIO_EMAIL = 20
+_PRIO_KVNR = 16
 _PRIO_IK = 15
+_PRIO_BIRTHDATE = 12
 _PRIO_PHONE = 10
+
+# Geburtsdatum nur mit Kontext -- ein nacktes Datum ist meist Rechnungs- oder
+# Leistungsdatum und gehoert zu den Diagnosedaten.
+_BIRTHDATE_RE = re.compile(
+    r"(?:\bgeb\.?|\bgeboren(?:\s+am)?|\bGeburtsdatum|\bGeb\.-?Dat(?:um|\.)?)\s*:?\s*"
+    r"(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{4})",
+    re.IGNORECASE,
+)
 
 _ROLE_CATEGORY = {
     NameRole.PATIENT: ReplacementCategory.PATIENT_NAME,
@@ -107,6 +118,27 @@ class EmailAnonymizer:
     PHONE_REGEX = re.compile(
         r"(?:(?:(?:\+|00)49\s*[\d\s\/\(\)-]{7,})|(?:\b0[1-9][\d\s\/\(\)-]{6,}\b))"
     )
+    # Steht eine dieser Bezeichnungen kurz vor der Ziffernkette, ist es eine
+    # Kennnummer (IK, Belegnummer ...) und keine Telefonnummer. Die Diagnosedaten
+    # bleiben dann erhalten; Personenbezug faengt die Abschlusspruefung ab.
+    _NUMBER_CONTEXT = re.compile(
+        r"(?:\bIK|Institutionskennzeichen|Beleg|Rechnung|Verordnung|Rezept|KVNR|"
+        r"Versichertennummer|LANR|BSNR|Arztnummer|Betriebsst|Datei|Nr\.?|Nummer|Position)"
+        r"[^\n]{0,25}$",
+        re.IGNORECASE,
+    )
+    _PHONE_CONTEXT = re.compile(
+        r"(?:\bTel(?:efon)?|\bFax|Telefax|Mobil|Handy|Durchwahl|Phone|\b[TFM]\s*:)[^\n]{0,12}$",
+        re.IGNORECASE,
+    )
+
+    # Header, die eine anonymisierte E-Mail behalten darf. Alles andere
+    # (Return-Path, Reply-To, Delivered-To, X-*, References ...) wird entfernt.
+    HEADER_ALLOWLIST = frozenset({
+        "from", "to", "cc", "date", "subject",
+        "mime-version", "content-type", "content-transfer-encoding",
+    })
+    PART_HEADER_ALLOWLIST = frozenset({"content-type", "content-transfer-encoding"})
     EMAIL_REGEX = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
     KVNR_REGEX = re.compile(r"\b[A-Z]\d{9}\b")
     IK_REGEX = re.compile(r"\b\d{9}\b")
@@ -130,6 +162,7 @@ class EmailAnonymizer:
         self.kassen_iks = set(kassen_iks or [])
         self.email_mappings: List[MappingEntry] = []
         self.suspicions: List[Suspicion] = []
+        self._kvnr_pseudos: Dict[str, Tuple[str, bool, str]] = {}
 
         # Personen, die erst in der E-Mail auftauchen.
         self._person_index: Dict[Tuple[NameRole, str], int] = {}
@@ -216,9 +249,12 @@ class EmailAnonymizer:
         if "cc" in msg:
             msg.replace_header("cc", "anonymisiert@beispiel.invalid")
 
-        for h in ["message-id", "received", "dkim-signature", "x-sender-ip", "user-agent", "x-mailer"]:
-            if h in msg:
-                del msg[h]
+        # Allowlist statt Denylist: Unbekannte Header koennen jederzeit Namen
+        # oder Adressen tragen (Reply-To, Return-Path, X-Sender-Name ...).
+        for h in {k.lower() for k in msg.keys()} - self.HEADER_ALLOWLIST:
+            del msg[h]
+        if msg.get_content_maintype() != "multipart":
+            self._strip_content_type_params(msg)
 
         if "subject" in msg:
             orig_subj = msg["subject"]
@@ -228,29 +264,100 @@ class EmailAnonymizer:
         # Process payload
         if msg.is_multipart():
             for idx, part in enumerate(msg.walk(), start=1):
-                content_type = part.get_content_type()
-                if content_type in ("text/plain", "text/html"):
-                    try:
-                        text = self._extract_message_text(part)
-                        sanitized = self._apply_replacements(text, section=f"Textteil {idx}")
-                        part.set_payload(sanitized)
-                        if "content-transfer-encoding" in part:
-                            del part["content-transfer-encoding"]
-                        part["Content-Transfer-Encoding"] = "8bit"
-                    except Exception:
-                        pass
+                if part is msg:
+                    continue
+                self._sanitize_part(part, idx)
         else:
-            try:
-                text = self._extract_message_text(msg)
-                sanitized = self._apply_replacements(text, section="Nachrichtentext")
-                msg.set_payload(sanitized)
-                if "content-transfer-encoding" in msg:
-                    del msg["content-transfer-encoding"]
-                msg["Content-Transfer-Encoding"] = "8bit"
-            except Exception:
-                pass
+            self._sanitize_part(msg, 0, top_level=True)
 
         return msg.as_string(), self.email_mappings
+
+    # ------------------------------------------------------------------
+    # MIME-Teile
+    # ------------------------------------------------------------------
+
+    _TEXT_TYPES = ("text/plain", "text/html")
+
+    @staticmethod
+    def _strip_content_type_params(part: email.message.Message) -> None:
+        """name=/filename=-Parameter entfernen -- sie tragen oft Patientennamen."""
+        for param in ("name", "filename"):
+            if part.get_param(param, header="content-type") is not None:
+                part.del_param(param, header="content-type")
+
+    def _replace_with_placeholder(self, part: email.message.Message, note: str) -> None:
+        """Teil vollstaendig durch einen sichtbaren Text-Platzhalter ersetzen."""
+        for h in list(part.keys()):
+            del part[h]
+        part["Content-Type"] = 'text/plain; charset="utf-8"'
+        part["Content-Transfer-Encoding"] = "8bit"
+        part.set_payload(f"[{note}]\n")
+
+    @staticmethod
+    def _payload_size(part: email.message.Message) -> str:
+        raw = part.get_payload(decode=True)
+        size = len(raw) if isinstance(raw, (bytes, bytearray)) else len(str(part.get_payload()))
+        return f"{size / 1024:.0f} KB" if size >= 1024 else f"{size} Byte"
+
+    def _sanitize_part(
+        self, part: email.message.Message, idx: int, top_level: bool = False
+    ) -> None:
+        """Einen MIME-Teil anonymisieren -- oder entfernen, wenn das nicht sicher geht.
+
+        * Container (multipart/*): nur unkritische Header behalten.
+        * Text (text/plain, text/html), auch als Anhang: durch die Ersetzung.
+        * Alles andere (PDF, Bilder, angehaengte E-Mails ...): durch einen
+          Platzhalter ersetzt. Der Inhalt laesst sich nicht pruefen.
+        * Schlaegt die Ersetzung fehl, wird der Teil entfernt statt im
+          Klartext stehen zu bleiben, und als Verdachtsfall gemeldet.
+        """
+        ctype = part.get_content_type()
+        label = "Nachrichtentext" if top_level else f"Teil {idx}"
+
+        if not top_level:
+            for h in {k.lower() for k in part.keys()} - self.PART_HEADER_ALLOWLIST - {"content-disposition"}:
+                del part[h]
+
+        if part.get_content_maintype() == "multipart":
+            if "content-disposition" in part:
+                del part["content-disposition"]
+            return
+
+        is_attachment = "attachment" in str(part.get("content-disposition", "")).lower()
+
+        if ctype not in self._TEXT_TYPES:
+            note = f"py-seudo: Anhang entfernt ({ctype}, {self._payload_size(part)})"
+            self._replace_with_placeholder(part, note)
+            self._record_mapping(
+                f"[Anhang {idx}: {ctype}]", note, ReplacementCategory.OTHER, "Anhang entfernt"
+            )
+            return
+
+        try:
+            text = self._extract_message_text(part)
+            sanitized = self._apply_replacements(text, section=label)
+        except Exception as exc:  # noqa: BLE001 -- jeder Fehler fuehrt zum Entfernen
+            note = f"py-seudo: {label} entfernt, konnte nicht sicher verarbeitet werden ({type(exc).__name__})"
+            self._replace_with_placeholder(part, note)
+            self._add_suspicion(
+                Suspicion(text=note, line=0, reason="Textteil nicht verarbeitbar – entfernt"),
+                label,
+            )
+            return
+
+        if "content-disposition" in part:
+            del part["content-disposition"]
+        if is_attachment:
+            # Text-Anhaenge (z. B. Abweisungsprotokolle) bleiben als Anhang
+            # erhalten, aber mit neutralem Dateinamen.
+            ext = ".html" if ctype == "text/html" else ".txt"
+            part["Content-Disposition"] = f'attachment; filename="anhang_{idx}{ext}"'
+        self._strip_content_type_params(part)
+        part.set_payload(sanitized)
+        if "content-transfer-encoding" in part:
+            del part["content-transfer-encoding"]
+        part["Content-Transfer-Encoding"] = "8bit"
+        part.set_param("charset", "utf-8")
 
     @staticmethod
     def _extract_message_text(part: email.message.Message) -> str:
@@ -319,6 +426,8 @@ class EmailAnonymizer:
 
         spans = mapping_spans + email_spans + name_spans
         spans += self._ik_spans(text)
+        spans += self._kvnr_spans(text)
+        spans += self._birthdate_spans(text)
         spans += self._phone_spans(text)
 
         accepted = self._resolve_overlaps(spans)
@@ -449,6 +558,14 @@ class EmailAnonymizer:
             stripped = raw.strip()
             if re.fullmatch(r"\d{9}", stripped) or re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", stripped):
                 continue
+            before = text[max(0, m.start() - 40) : m.start()]
+            international = stripped.startswith(("+", "00"))
+            if (
+                not international
+                and not self._PHONE_CONTEXT.search(before)
+                and self._NUMBER_CONTEXT.search(before)
+            ):
+                continue  # Kennnummer (IK, Beleg ...), keine Telefonnummer
             # Nur den getrimmten Teil ersetzen, damit umgebender Whitespace bleibt
             offset = m.start() + (len(raw) - len(raw.lstrip()))
             spans.append(
@@ -460,6 +577,72 @@ class EmailAnonymizer:
                     category=ReplacementCategory.CONTACT_INFO,
                     description="Telefon-/Faxnummer",
                     priority=_PRIO_PHONE,
+                )
+            )
+        return spans
+
+    def _kvnr_spans(self, text: str) -> List[_Span]:
+        """Versichertennummern, die nicht aus der ESOL-Datei bekannt sind."""
+        spans = []
+        for m in self.KVNR_REGEX.finditer(text):
+            kvnr = m.group(0)
+            if kvnr in self._own_pseudonyms():
+                continue
+            entry = self.shared_mappings.get(kvnr) or next(
+                (e for e in self.email_mappings if e.original == kvnr), None
+            )
+            if entry:
+                pseudo, mirrored, note = entry.pseudonym, entry.error_mirrored, entry.diagnostic_note
+            elif kvnr in self._kvnr_pseudos:
+                pseudo, mirrored, note = self._kvnr_pseudos[kvnr]
+            else:
+                pseudo, mirrored, note = generate_mirrored_kvnr(kvnr, self._next_kvnr_counter())
+                self._kvnr_pseudos[kvnr] = (pseudo, mirrored, note)
+            spans.append(
+                _Span(
+                    start=m.start(),
+                    end=m.end(),
+                    original=kvnr,
+                    replacement=pseudo,
+                    category=ReplacementCategory.KVNR,
+                    description="Versichertennummer im Text",
+                    priority=_PRIO_KVNR,
+                    error_mirrored=mirrored,
+                    diagnostic_note=note,
+                )
+            )
+        return spans
+
+    def _next_kvnr_counter(self) -> int:
+        """Naechste freie Nummer oberhalb aller schon vergebenen KVNR-Pseudonyme."""
+        highest = 0
+        for pseudo in list(self._own_pseudonyms()) + [v[0] for v in self._kvnr_pseudos.values()]:
+            if re.fullmatch(r"[A-Z]\d{9}", pseudo):
+                highest = max(highest, int(pseudo[1:9]) + 1)
+        return highest + 1
+
+    def _own_pseudonyms(self) -> Set[str]:
+        return {e.pseudonym for e in self.shared_mappings.values()} | {
+            e.pseudonym for e in self.email_mappings
+        }
+
+    def _birthdate_spans(self, text: str) -> List[_Span]:
+        """Geburtsdaten mit Kontext: Jahr bleibt, Tag/Monat werden 15.06."""
+        spans = []
+        for m in _BIRTHDATE_RE.finditer(text):
+            original = text[m.start(1) : m.end(3)]
+            pseudo = f"15.06.{m.group(3)}"
+            if original == pseudo:
+                continue
+            spans.append(
+                _Span(
+                    start=m.start(1),
+                    end=m.end(3),
+                    original=original,
+                    replacement=pseudo,
+                    category=ReplacementCategory.BIRTHDATE,
+                    description="Geburtsdatum im Text",
+                    priority=_PRIO_BIRTHDATE,
                 )
             )
         return spans

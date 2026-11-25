@@ -12,6 +12,7 @@ class ReplacementCategory(str, Enum):
     BIRTHDATE = "Geburtsdatum"
     ADDRESS = "Adresse / Wohnort"
     PRACTICE_IK = "Praxis-IK (Institutionskennzeichen)"
+    PRACTICE_NAME = "Praxisname"
     DOCTOR_NAME = "Arztname"
     DOCTOR_LANR = "Arztnummer (LANR)"
     DOCTOR_BSNR = "Betriebsstättennummer (BSNR)"

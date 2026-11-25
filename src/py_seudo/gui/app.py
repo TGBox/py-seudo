@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from py_seudo.engine import PseudoEngine
+from py_seudo.export_paths import output_names
 from py_seudo.gui.diff_widget import DiffWidget
 from py_seudo.gui.english_tab import EnglishTabWidget
 from py_seudo.gui.mapping_widget import MappingWidget
@@ -79,11 +80,26 @@ class FileDropBox(QGroupBox):
 
     def load_file(self, path: Path) -> None:
         try:
+            raw = path.read_bytes()
+            # Binaerdateien (z. B. Outlook-.msg) gar nicht erst laden: kein
+            # Erkenner greift darin, die Datei liefe unveraendert durch.
+            if raw.startswith(b"\xd0\xcf\x11\xe0") or b"\x00" in raw[:65536]:
+                QMessageBox.warning(
+                    self,
+                    "Datei nicht unterstützt",
+                    f"„{path.name}“ ist eine Binärdatei (z. B. Outlook-.msg) und kann nicht "
+                    "sicher anonymisiert werden.\n\n"
+                    "Outlook-Nachrichten bitte über „Speichern unter“ als „Nur Text“ (.txt) "
+                    "oder als .eml speichern.",
+                )
+                return
             # Attempt utf-8 first, fallback to latin-1 (common in older German EDIFACT exports)
             try:
-                content = path.read_text(encoding="utf-8")
+                content = raw.decode("utf-8")
             except UnicodeDecodeError:
-                content = path.read_text(encoding="latin-1")
+                content = raw.decode("latin-1")
+            # Wie read_text(): Zeilenenden vereinheitlichen
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
 
             self.file_path = path
             self.file_content = content
@@ -204,7 +220,7 @@ class MainWindow(QMainWindow):
         )
         self.email_box = FileDropBox(
             "2. Rückmeldungsemail der Kasse",
-            "E-Mail-Dateien (*.eml *.txt *.msg);;Alle Dateien (*.*)",
+            "E-Mail-Dateien (*.eml *.txt);;Alle Dateien (*.*)",
         )
 
         file_row.addWidget(self.esol_box, 1)
@@ -515,17 +531,33 @@ class MainWindow(QMainWindow):
         dest = Path(target_dir)
         saved_files = []
 
+        # Neutrale Dateinamen: Eingabedateien sind oft nach Patienten benannt.
+        names = output_names(self.esol_box.file_path, self.email_box.file_path)
+        planned = []
+        if self.current_result.anonymized_esol:
+            planned.append(dest / names["esol"])
+        if self.current_result.anonymized_email:
+            planned.append(dest / names["email"])
+        if self.current_result.english_report and self.current_result.english_report.strip():
+            planned.append(dest / names["report"])
+
+        existing = [p for p in planned if p.exists()]
+        if existing:
+            reply = QMessageBox.question(
+                self,
+                "Dateien überschreiben?",
+                "Im Zielordner existieren bereits:\n\n"
+                + "\n".join(f"• {p.name}" for p in existing)
+                + "\n\nÜberschreiben?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         try:
             if self.current_result.anonymized_esol:
-                if self.esol_box.file_path and not self.esol_box.file_path.suffix:
-                    esol_name = f"{self.esol_box.file_path.name}_anonymisiert"
-                else:
-                    esol_name = (
-                        f"{self.esol_box.file_path.stem}_anonymisiert{self.esol_box.file_path.suffix}"
-                        if self.esol_box.file_path
-                        else "ESOL0001_anonymisiert"
-                    )
-                p_esol = dest / esol_name
+                p_esol = dest / names["esol"]
                 try:
                     p_esol.write_text(self.current_result.anonymized_esol, encoding="latin-1")
                 except UnicodeEncodeError:
@@ -533,30 +565,13 @@ class MainWindow(QMainWindow):
                 saved_files.append(p_esol.name)
 
             if self.current_result.anonymized_email:
-                email_ext = (
-                    self.email_box.file_path.suffix if self.email_box.file_path else ".eml"
-                )
-                if not email_ext or email_ext.lower() not in (".eml", ".txt", ".msg"):
-                    email_ext = ".eml"
-                email_name = (
-                    f"{self.email_box.file_path.stem}_anonymisiert{email_ext}"
-                    if self.email_box.file_path
-                    else f"rueckmeldung_anonymisiert{email_ext}"
-                )
-                p_mail = dest / email_name
+                p_mail = dest / names["email"]
                 p_mail.write_text(self.current_result.anonymized_email, encoding="utf-8")
                 saved_files.append(p_mail.name)
 
             # Export English Summary & Translation file if available
             if self.current_result.english_report and self.current_result.english_report.strip():
-                if self.esol_box.file_path:
-                    base_stem = self.esol_box.file_path.stem
-                elif self.email_box.file_path:
-                    base_stem = self.email_box.file_path.stem
-                else:
-                    base_stem = "abrechnung"
-                en_name = f"{base_stem}_anonymisiert_summary_and_email_en.txt"
-                p_en = dest / en_name
+                p_en = dest / names["report"]
                 p_en.write_text(self.current_result.english_report, encoding="utf-8")
                 saved_files.append(p_en.name)
 

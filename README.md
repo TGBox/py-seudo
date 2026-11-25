@@ -40,21 +40,28 @@ Falls die Erkennung eine Stelle übersehen hat oder man gezielt eigene Dummy-Wer
 - **Kostenträger-IKs (Krankenkassen):** Bleiben vollständig unverändert erhalten.
 - **Diagnosen (ICD-10):** Codes wie `M54.5` bleiben erhalten.
 - **Abrechnungspositionen:** Heilmittel-Positionsnummern (z. B. `21201`), Tarife, Mengen und Beträge bleiben für die Fehlersuche exakt erhalten.
-- **Syntaktische Validität:** EDIFACT-Trennzeichen (`+`, `:`, `'`, `?`) und Segmentstrukturen (`UNA`, `UNB`, `UNH`, `FKT`, `REC`, `INV`, `NAD`, `DTM`, `BES`, `ZHE`, `EHE`, `UNT`, `UNZ`) werden strikt gewahrt.
+- **Syntaktische Validität:** EDIFACT-Trennzeichen (`+`, `:`, `'`, `?`) und Segmentstrukturen (`UNA`, `UNB`, `UNH`, `FKT`, `REC`, `INV`, `NAD`, `NAM`, `COM`, `FTX`, `DTM`, `BES`, `ZHE`, `EHE`, `UNT`, `UNZ`) werden strikt gewahrt.
+- **Fail-closed bei Unbekanntem:** `NAD`-Segmente mit unbekanntem Qualifier oder Layout werden vollständig ersetzt und gemeldet. `COM` (Telefon/E-Mail) wird immer ersetzt, `FTX`-Freitext durch die Namenserkennung geschickt und zusätzlich zur Prüfung gemeldet.
+- **Konsistente Pseudonyme:** Derselbe Patient erhält überall dieselben Pseudonyme (KVNR, Name, Adresse aus einer gemeinsamen Nummer). Dummy-PLZ beginnen mit `00` und können keiner echten PLZ gleichen.
+- **Leistungsdaten bleiben:** Geburtsdaten werden über den DTM-Qualifier erkannt; ein Datum direkt nach einem Patienten-`NAD` gilt nur dann als Geburtsdatum, wenn es mehr als zwei Jahre vor dem Dateidatum liegt.
 
 ### 5. ✉️ Konsistente E-Mail-Bereinigung & Namenserkennung
 - Gleiche Pseudonyme wie in der ESOL-Datei (derselbe Dummy-Name, dieselbe Dummy-KVNR).
-- Bereinigung von Kopfzeilen (`From`, `To`, `Cc`, `Subject`, `Message-ID`).
-- Automatische Maskierung von E-Mail-Adressen, Telefon- und Faxnummern.
+- **Header-Allowlist:** Nur `From`, `To`, `Cc` (pseudonymisiert), `Date`, `Subject`, `MIME-Version` und `Content-*` bleiben; alle anderen Kopfzeilen (`Reply-To`, `Return-Path`, `X-…` usw.) werden entfernt.
+- **Anhänge:** Nicht-Text-Anhänge (PDF, Bilder, angehängte E-Mails) werden durch einen sichtbaren Platzhalter ersetzt. Text-Anhänge werden anonymisiert und neutral umbenannt. Lässt sich ein Textteil nicht sicher verarbeiten, wird er entfernt und gemeldet.
+- **Binärdateien wie Outlook-`.msg`** werden abgelehnt – bitte als `.eml` oder „Nur Text“ speichern.
+- Automatische Maskierung von E-Mail-Adressen, Versichertennummern, Geburtsdaten (mit Kontext), Telefon- und Faxnummern. Ziffernketten im Kontext von IK, Beleg- oder Rechnungsnummern werden nicht als Telefonnummer behandelt.
 - **Kontextbasierte Namenserkennung:** Namen aus Anreden (`Sehr geehrte Frau …`), Titeln (`Dr. med. …`), Feldbeschriftungen (`Patient:`, `Verordnender Arzt:`) und Signaturen werden mit realistischen deutschen Namen ersetzt (z. B. `Frau Schmidt`, `Ulla Winkler`).
 - **Umlaut-Erhalt:** Verlustfreies UTF-8-Encoding schützt deutsche Sonderzeichen (ä, ö, ü, ß).
 
 ### 6. ⚠️ Restrisiko-Meldung & lückenloser Audit-Trail
-- **Restrisiko-Banner:** Stellen, die nach Personenbezug aussehen, aber nicht eindeutig zugeordnet werden konnten, werden nicht heimlich übergangen, sondern im Reiter *Ersetzungs-Protokoll* aufgelistet. Vor dem Export wird darauf hingewiesen.
+- **Abschlussprüfung:** Nach jeder Anonymisierung und jeder manuellen Änderung prüft `verify.py` ESOL, E-Mail und englischen Report auf übrig gebliebene Versichertennummern, Kennnummern, Geburtsdaten, E-Mail-Adressen, Telefonnummern, PLZ mit Ort und nicht ersetzte Originale.
+- **Exportsperre:** Solange eine Stelle offen ist, sind Speichern, Einzel-Export, Kopieren und KI-Versand gesperrt. Über *„🔎 Verdachtsfälle prüfen…“* wird jede Stelle einzeln ersetzt oder ausdrücklich freigegeben.
+- **Neutrale Dateinamen:** Exporte übernehmen den Eingabenamen nur, wenn er eine technische Kennung ist (z. B. `ESOL0001`); vor dem Überschreiben wird gefragt.
 - **Audit-Export:**
   - **JSON-Export:** Enthält alle Ersetzungen, `total_errors_mirrored`, `total_manual_edits` sowie Diagnosehinweise.
   - **CSV-Export (Excel-optimiert):** Mit UTF-8-BOM und den Spalten `Original`, `Pseudonym`, `Kategorie`, `Anzahl`, `FehlerGespiegelt`, `DiagnoseHinweis`, `ManuellGeaendert`, `Beschreibung`.
-- **Sicherheit:** Zuordnungen verbleiben standardmäßig ausschließlich im RAM. Lokale Audit-Exporte sind via `.gitignore` gegen versehentliche Git-Commits geschützt.
+- **Sicherheit:** Zuordnungen verbleiben standardmäßig ausschließlich im RAM. Der Audit-Export enthält Klardaten; beim Speichern in einen synchronisierten Ordner (OneDrive, Dropbox, Netzlaufwerk) wird gewarnt.
 
 ### 7. 🇬🇧 Neu: Englischer Entwickler-Report & E-Mail-Übersetzung
 Um Fehleranalysen und abgewiesene Abrechnungsdaten nahtlos mit internationalen Softwareentwicklern teilen zu können, erstellt `py-seudo` automatisch einen kombinierten englischen Übergabereport (`*_summary_and_email_en.txt`):
@@ -64,6 +71,9 @@ Um Fehleranalysen und abgewiesene Abrechnungsdaten nahtlos mit internationalen S
 - **Hybrid-Architektur (Offline-First):**
   - **Lokaler Generator (Standard):** Arbeitet zu 100 % offline, datenschutzkonform und ohne API-Schlüssel direkt auf Ihrem Computer.
   - **Optionale KI-APIs:** Unterstützt OpenAI / OpenAI-kompatible Endpunkte (z. B. Ollama, GPT-4o-mini), Google Gemini und Anthropic Claude zur Übersetzung.
+  - **Absicherung:** Vor jedem Versand zeigt ein Dialog den exakten Text und den Zielserver. Bei offenen Verdachtsfällen wird nichts gesendet. `https://` ist Pflicht (`http://` nur für `localhost`), API-Schlüssel werden unter Windows per DPAPI verschlüsselt gespeichert, der Gemini-Schlüssel geht im Header statt in der URL.
+  - **Organisationsweit abschaltbar:** Mit der Umgebungsvariable `PY_SEUDO_DISABLE_CLOUD=1` (z. B. per Gruppenrichtlinie) bietet die Anwendung nur noch den lokalen Generator an.
+  - **Hinweis:** Für den Versand an Cloud-Anbieter ist ein Vertrag zur Auftragsverarbeitung mit dem Anbieter und die Freigabe durch den Datenschutz erforderlich.
 - **Benutzeroberfläche:** Eigener Reiter `🇬🇧 Englisch (Summary & E-Mail)` mit Live-Vorschau, Bearbeitungsmöglichkeit (`✏️ Manuell bearbeitbar`), Anbieter-Auswahl und Einstellungsdialog (`⚙️ API-Einstellungen`).
 - **Automatischer Export:** Wird beim Klick auf *„💾 Anonymisierte Dateien speichern...“* automatisch als zusätzliche Textdatei in das Zielverzeichnis exportiert.
 
@@ -137,6 +147,10 @@ uv run pytest --cov=py_seudo --cov-report=term-missing
 - `tests/test_email_names.py`: 43 Tests für kontextbasierte Erkennung, Rollenzuordnung und stilgetreue deutsche Namen.
 - `tests/test_esol_anonymizer.py` & `test_tokenizer.py`: EDIFACT/ESOL-Parsing, Segmentintegrität und Idempotenz.
 - `tests/test_engine.py` & `test_gui.py`: End-to-End-Pipeline, CSV/JSON-Exporte und PySide6-GUI-Interaktionen.
+- `tests/test_verify.py`: Abschlussprüfung, Freigaben und Sperre des KI-Versands.
+- `tests/test_email_hardening.py` & `test_esol_hardening.py`: Header, Anhänge, Binärdateien, Telefonerkennung, unbekannte Segmente, Pseudonym-Konsistenz, Leistungsdaten.
+- `tests/test_translation_security.py`: HTTPS-Pflicht, Modellnamen, Gemini-Header, Richtlinie, Schlüsselablage.
+- `tests/test_export_paths.py`: Neutrale Dateinamen und Erkennung synchronisierter Ordner.
 
 ---
 

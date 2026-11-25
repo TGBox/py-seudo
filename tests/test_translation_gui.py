@@ -190,3 +190,30 @@ def test_english_tab_regenerate_flow(qtbot):
         tab.regenerate()
         assert mock_crit.call_count == 1
 
+
+
+def test_cloud_send_requires_confirmation(qtbot):
+    tab = EnglishTabWidget()
+    qtbot.addWidget(tab)
+    result = PseudoEngine().process(email_text="Sehr geehrte Damen und Herren,\nDie Datei wurde abgewiesen.\n")
+    assert result.suspicions == []
+    tab.current_result = result
+    tab.provider_combo.setCurrentIndex(tab.provider_combo.findData(TranslationProvider.OPENAI))
+
+    with patch.object(EnglishTabWidget, "_confirm_send", return_value=False) as confirm, \
+         patch("py_seudo.gui.english_tab.generate_developer_report") as gen:
+        tab.regenerate()
+        confirm.assert_called_once()
+        gen.assert_not_called()
+
+    s = SettingsManager.load_settings()
+    s.provider = TranslationProvider.LOCAL
+    SettingsManager.save_settings(s)
+
+
+def test_policy_hides_cloud_providers(qtbot, monkeypatch):
+    monkeypatch.setenv("PY_SEUDO_DISABLE_CLOUD", "1")
+    tab = EnglishTabWidget()
+    qtbot.addWidget(tab)
+    assert tab.provider_combo.count() == 1
+    assert tab.provider_combo.currentData() == TranslationProvider.LOCAL

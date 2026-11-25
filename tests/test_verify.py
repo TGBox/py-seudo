@@ -36,31 +36,39 @@ def test_email_only_leaks_are_flagged():
     )
     r = PseudoEngine().process(email_text=mail)
     found = _texts(r)
-    assert "A111111111" in found
-    assert "01.02.1980" in found
+    # KVNR und Geburtsdatum ersetzt die E-Mail-Seite inzwischen selbst ...
+    assert "A111111111" not in r.anonymized_email
+    assert "01.02.1980" not in r.anonymized_email
+    assert "15.06.1980" in r.anonymized_email
+    # ... IK und Adresse ohne Bezug zur ESOL-Datei meldet die Pruefung.
     assert "123456789" in found
     assert "50667 Koeln" in found
 
 
-def test_leaking_headers_and_attachment_names_are_flagged():
+def test_leaking_headers_and_attachments_are_removed():
     mail = (
         "Return-Path: <andrea.becker@tk.de>\n"
+        "Reply-To: Andrea Becker <a.becker@tk.de>\n"
+        "X-Sender-Name: Andrea Becker\n"
         "From: Andrea Becker <a.becker@tk.de>\n"
         "To: praxis@sonnenschein.de\n"
         "Subject: Test\n"
         "MIME-Version: 1.0\n"
         'Content-Type: multipart/mixed; boundary="BB"\n\n'
         "--BB\nContent-Type: text/plain\n\nHallo\n"
-        '--BB\nContent-Type: application/pdf\n'
-        'Content-Disposition: attachment; filename="Protokoll_A123456789.pdf"\n\nAAAA\n--BB--\n'
+        '--BB\nContent-Type: application/pdf; name="Protokoll_A123456789.pdf"\n'
+        'Content-Disposition: attachment; filename="Protokoll_A123456789.pdf"\n'
+        "Content-Transfer-Encoding: base64\n\nSGVsbG8gTWVpZXI=\n--BB--\n"
     )
     r = PseudoEngine().process(email_text=mail)
-    found = _texts(r)
-    assert "andrea.becker@tk.de" in found
-    assert "A123456789" in found
+    out = r.anonymized_email
+    for leak in ("andrea.becker", "a.becker", "Andrea Becker", "A123456789", "SGVsbG8gTWVpZXI="):
+        assert leak not in out
+    assert "Anhang entfernt (application/pdf" in out
+    assert r.suspicions == []
 
 
-def test_unhandled_esol_segments_are_flagged():
+def test_unhandled_esol_segments_are_replaced_and_flagged():
     esol = UNB + (
         "NAD+PV+A111111111+++Meier+Anna+Ringweg 3+Koeln++50667+DE'\n"
         "COM+0221 123456:TE'\n"
@@ -70,11 +78,12 @@ def test_unhandled_esol_segments_are_flagged():
         "UNZ+1+1'\n"
     )
     r = PseudoEngine().process(esol_text=esol)
-    found = _texts(r)
-    assert "A111111111" in found
-    assert "praxis@meier.de" in found
-    assert "1234567890" in found
-    assert "12345678" in found
+    out = r.anonymized_esol
+    for leak in ("A111111111", "Meier", "Anna", "Ringweg", "Koeln", "50667",
+                 "0221 123456", "praxis@meier.de", "1234567890", "12345678"):
+        assert leak not in out, leak
+    # Unbekanntes Layout wird trotzdem gemeldet -- es koennte Diagnosedaten getroffen haben.
+    assert "NAD+PV" in _texts(r)
 
 
 def test_surviving_original_is_flagged():
@@ -124,24 +133,26 @@ def test_original_inside_pseudonym_is_not_a_leak():
     assert found == []
 
 
-def test_synthetic_fixture_reports_known_gaps():
-    """Die Fixture enthaelt eine Praxisadresse im NAM-Segment, die der
-    Anonymisierer nicht ersetzt -- die Pruefung muss sie melden."""
+def test_synthetic_fixture_is_clean():
+    """NAM-Adresse und zweites Kassen-IK im FKT werden inzwischen erkannt."""
     esol = Path("tests/data/slla21_synthetic.txt").read_text(encoding="utf-8")
     r = PseudoEngine().process(esol_text=esol)
-    assert "55555 Testhausen" in _texts(r)
+    assert "55555 Testhausen" not in r.anonymized_esol
+    assert "Teststrasse 3" not in r.anonymized_esol
+    assert "104080005" in r.anonymized_esol  # Kassen-IK bleibt
+    assert r.suspicions == []
 
 
 # --- Freigabe ----------------------------------------------------------------
 
 def test_acknowledged_items_are_released_individually():
-    r = PseudoEngine().process(email_text="KVNR A111111111, IK 123456789\n")
-    assert {"A111111111", "123456789"} <= _texts(r)
+    r = PseudoEngine().process(email_text="IK 123456789, wohnhaft 50667 Koeln\n")
+    assert {"123456789", "50667 Koeln"} <= _texts(r)
 
     r.acknowledged.add("123456789")
     recheck(r)
     assert "123456789" not in _texts(r)
-    assert "A111111111" in _texts(r)
+    assert "50667 Koeln" in _texts(r)
 
 
 def test_detector_suspicion_disappears_once_fixed():
@@ -171,7 +182,7 @@ def test_report_is_checked_too():
 # --- KI-Versand ----------------------------------------------------------------
 
 def test_cloud_call_blocked_while_suspicions_open():
-    r = PseudoEngine().process(email_text="Sehr geehrte Damen und Herren,\nKVNR A111111111\n")
+    r = PseudoEngine().process(email_text="Sehr geehrte Damen und Herren,\nIK 123456789\n")
     settings = TranslationSettings(provider=TranslationProvider.OPENAI, openai_api_key="x")
     with patch("py_seudo.translation.api_client.call_openai_api") as call:
         with pytest.raises(UnresolvedSuspicions):
@@ -180,7 +191,7 @@ def test_cloud_call_blocked_while_suspicions_open():
 
 
 def test_cloud_call_allowed_once_clean():
-    r = PseudoEngine().process(email_text="Sehr geehrte Damen und Herren,\nKVNR A111111111\n")
+    r = PseudoEngine().process(email_text="Sehr geehrte Damen und Herren,\nIK 123456789\n")
     r.acknowledged.update(s.text for s in r.suspicions)
     recheck(r)
     settings = TranslationSettings(provider=TranslationProvider.OPENAI, openai_api_key="x")
@@ -190,7 +201,7 @@ def test_cloud_call_allowed_once_clean():
 
 
 def test_local_provider_never_blocked():
-    r = PseudoEngine().process(email_text="KVNR A111111111\n")
+    r = PseudoEngine().process(email_text="IK 123456789\n")
     assert r.suspicions
     settings = TranslationSettings(provider=TranslationProvider.LOCAL)
     assert "SECTION 1:" in generate_developer_report(r, settings)

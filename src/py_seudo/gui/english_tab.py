@@ -1,6 +1,7 @@
 """English Summary & Translation preview tab for py-seudo."""
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -8,6 +9,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -22,7 +25,13 @@ from PySide6.QtWidgets import (
 
 from py_seudo.gui.api_settings_dialog import ApiSettingsDialog
 from py_seudo.models import AnonymizationResult
-from py_seudo.translation.api_client import generate_developer_report
+from py_seudo.translation.api_client import (
+    build_user_prompt,
+    cloud_disabled,
+    describe_target,
+    ensure_prompt_allowed,
+    generate_developer_report,
+)
 from py_seudo.translation.models import TranslationProvider, TranslationSettings
 from py_seudo.translation.local_generator import LocalReportGenerator
 from py_seudo.translation.settings_manager import SettingsManager
@@ -37,6 +46,8 @@ class EnglishTabWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.settings: TranslationSettings = SettingsManager.load_settings()
+        if cloud_disabled():
+            self.settings.provider = TranslationProvider.LOCAL
         self.current_result: Optional[AnonymizationResult] = None
         self.is_dark_mode = True
         # Wird vom Hauptfenster gesetzt: liefert False, wenn Weitergabe gesperrt ist.
@@ -63,9 +74,12 @@ class EnglishTabWidget(QWidget):
         self.provider_combo = QComboBox()
         self.provider_combo.setView(QListView())
         self.provider_combo.addItem("Lokaler Generator (Offline, DSGVO-konform)", TranslationProvider.LOCAL)
-        self.provider_combo.addItem("OpenAI / Kompatibel (GPT-4o, Ollama)", TranslationProvider.OPENAI)
-        self.provider_combo.addItem("Google Gemini", TranslationProvider.GEMINI)
-        self.provider_combo.addItem("Anthropic Claude", TranslationProvider.CLAUDE)
+        if not cloud_disabled():
+            self.provider_combo.addItem("OpenAI / Kompatibel (GPT-4o, Ollama)", TranslationProvider.OPENAI)
+            self.provider_combo.addItem("Google Gemini", TranslationProvider.GEMINI)
+            self.provider_combo.addItem("Anthropic Claude", TranslationProvider.CLAUDE)
+        else:
+            self.provider_combo.setToolTip("Externe KI-Anbieter sind per Richtlinie deaktiviert.")
 
         # Select provider from settings
         for i in range(self.provider_combo.count()):
@@ -249,6 +263,20 @@ class EnglishTabWidget(QWidget):
         if isinstance(provider, TranslationProvider):
             self.settings.provider = provider
 
+        if self.settings.provider != TranslationProvider.LOCAL:
+            try:
+                prompt = build_user_prompt(self.current_result)
+                ensure_prompt_allowed(self.current_result, prompt)
+                target = describe_target(self.settings)
+            except UnresolvedSuspicions as e:
+                self._show_blocked(e)
+                return
+            except ValueError as e:
+                QMessageBox.critical(self, "Ungültige Einstellungen", str(e))
+                return
+            if prompt.strip() and not self._confirm_send(prompt, target):
+                return
+
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             report_text = generate_developer_report(self.current_result, self.settings)
@@ -257,14 +285,7 @@ class EnglishTabWidget(QWidget):
             self._update_status_badge()
             self._update_stats()
         except UnresolvedSuspicions as e:
-            QMessageBox.warning(
-                self,
-                "Versand gesperrt",
-                f"Der Text wurde NICHT an {self.settings.provider.display_name} gesendet.\n\n"
-                f"{e}\n\n"
-                "Bitte die Stellen im Reiter 'Ersetzungs-Protokoll & Mappings' über "
-                "'Verdachtsfälle prüfen…' ersetzen oder freigeben.",
-            )
+            self._show_blocked(e)
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -274,6 +295,39 @@ class EnglishTabWidget(QWidget):
             )
         finally:
             QGuiApplication.restoreOverrideCursor()
+
+    def _show_blocked(self, e: Exception) -> None:
+        QMessageBox.warning(
+            self,
+            "Versand gesperrt",
+            f"Der Text wurde NICHT an {self.settings.provider.display_name} gesendet.\n\n"
+            f"{e}\n\n"
+            "Bitte die Stellen im Reiter 'Ersetzungs-Protokoll & Mappings' über "
+            "'Verdachtsfälle prüfen…' ersetzen oder freigeben.",
+        )
+
+    def _confirm_send(self, prompt: str, target: str) -> bool:
+        """Vor jedem Versand genau zeigen, was wohin geht."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Text an externen Dienst senden?")
+        dlg.setMinimumSize(720, 480)
+        layout = QVBoxLayout(dlg)
+        info = QLabel(
+            f"<b>Ziel:</b> {html.escape(target)}<br>"
+            "Der folgende Text verlässt diesen Rechner. Bitte prüfen Sie, dass er keine "
+            "Personen- oder Praxisdaten enthält."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        preview = QPlainTextEdit(prompt)
+        preview.setReadOnly(True)
+        layout.addWidget(preview, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        send_btn = buttons.addButton("Senden", QDialogButtonBox.ButtonRole.AcceptRole)
+        send_btn.clicked.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        return dlg.exec() == QDialog.DialogCode.Accepted
 
     def get_report_text(self) -> str:
         return self.editor.toPlainText()

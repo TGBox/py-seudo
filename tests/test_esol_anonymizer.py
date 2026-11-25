@@ -89,9 +89,9 @@ def test_doctor_pseudonymization():
     assert "876543210" not in out_text
     assert "VERORD998877" not in out_text
 
-    # Valid dummy LANR and BSNR
+    # Valid dummy LANR and BSNR (eigener Zaehler je Nummernart)
     assert "888000001" in out_text
-    assert "777000002" in out_text
+    assert "777000001" in out_text
     assert "BELEG9990001" in out_text
 
 
@@ -170,11 +170,6 @@ def test_slla21_ist_idempotent(slla21_text: str):
     assert once == twice
 
 
-@pytest.mark.xfail(
-    reason="Bekannte Luecke: der NAM-Handler behandelt nur Element 0 (Name) "
-           "und Element 3 (Kontakt). Strasse und Ort der Praxis laufen durch.",
-    strict=True,
-)
 def test_nam_adresse_wird_anonymisiert(slla21_text: str):
     out_text, _ = EsolAnonymizer(slla21_text).anonymize()
     assert "Teststrasse 3" not in out_text

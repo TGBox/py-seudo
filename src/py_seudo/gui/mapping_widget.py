@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from py_seudo.engine import PseudoEngine
+from py_seudo.export_paths import is_synced_location
 from py_seudo.models import AnonymizationResult, MappingEntry, ReplacementCategory, Suspicion
 
 
@@ -544,6 +545,19 @@ class MappingWidget(QWidget):
 
         if file_path:
             p = Path(file_path)
+            if is_synced_location(p.parent):
+                reply = QMessageBox.warning(
+                    self,
+                    "⚠️ Synchronisierter Speicherort",
+                    "Der gewählte Ordner wird vermutlich mit einer Cloud oder einem "
+                    "Netzlaufwerk synchronisiert (z. B. OneDrive, Dropbox, Netzwerkfreigabe).\n\n"
+                    "Die Mapping-Datei enthält Klardaten und würde damit das Gerät verlassen.\n\n"
+                    "Trotzdem dort speichern?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
             try:
                 if p.suffix.lower() == ".csv":
                     PseudoEngine.export_audit_mapping_csv(self.current_result, p)
@@ -554,7 +568,8 @@ class MappingWidget(QWidget):
                     self,
                     "Export erfolgreich",
                     f"Die Mapping-Audit-Datei wurde erfolgreich gespeichert unter:\n{file_path}\n\n"
-                    "Hinweis: Die Datei ist durch die .gitignore dieses Projekts gegen versehentliches Committen geschützt.",
+                    "Hinweis: Die Datei enthält Klardaten. Bewahren Sie sie nur an einem "
+                    "geschützten Ort auf und löschen Sie sie, sobald sie nicht mehr gebraucht wird.",
                 )
             except Exception as e:
                 QMessageBox.critical(self, "Fehler beim Export", f"Konnte Datei nicht speichern:\n{e}")

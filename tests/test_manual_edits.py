@@ -282,3 +282,33 @@ def test_mapping_added_refreshes_english_report(qapp):
     )
     assert "Ringweg 3" not in window.english_tab.get_report_text()
     assert "Musterweg 1" in window.english_tab.get_report_text()
+
+
+def test_binary_msg_file_is_rejected_on_load(qapp, tmp_path: Path):
+    msg = tmp_path / "Rueckweisung.msg"
+    msg.write_bytes(b"\xd0\xcf\x11\xe0" + "Anna Meier".encode("utf-16-le"))
+    window = MainWindow()
+    with patch("PySide6.QtWidgets.QMessageBox.warning") as warn:
+        window.email_box.load_file(msg)
+        warn.assert_called_once()
+    assert window.email_box.file_content == ""
+
+
+def test_export_uses_neutral_file_names(qapp, tmp_path: Path):
+    src = tmp_path / "in"
+    src.mkdir()
+    mail = src / "AW Rueckweisung Anna Meier.txt"
+    mail.write_text("Sehr geehrte Damen und Herren,\nDie Datei wurde abgewiesen.\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    window = MainWindow()
+    window.email_box.load_file(mail)
+    window._run_anonymization()
+    assert window.current_result.suspicions == []
+    with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory", return_value=str(out)), \
+         patch("PySide6.QtWidgets.QMessageBox.information"):
+        window._save_anonymized_files()
+    names = [p.name for p in out.iterdir()]
+    assert names
+    assert all("Meier" not in n for n in names)

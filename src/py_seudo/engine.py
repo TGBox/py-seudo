@@ -22,8 +22,32 @@ class PseudoEngine:
     def __init__(self, specified_practice_ik: Optional[str] = None):
         self.specified_practice_ik = specified_practice_ik
 
+    @staticmethod
+    def reject_binary(text: str, label: str) -> None:
+        """Binaerdateien ablehnen statt sie unverarbeitet durchzureichen.
+
+        Outlook-.msg (OLE-Container) und andere Binaerformate enthalten den Text
+        z. B. in UTF-16 -- kein Erkenner greift, die Datei liefe unveraendert
+        durch. Erkennung ueber die OLE-Signatur bzw. NUL-Bytes.
+        """
+        if not text:
+            return
+        if text.startswith("\xd0\xcf\x11\xe0") or "\x00" in text[:65536]:
+            hint = (
+                " Outlook-Nachrichten bitte in Outlook über „Speichern unter“ als "
+                "„Nur Text“ oder .eml speichern."
+                if label == "E-Mail"
+                else ""
+            )
+            raise ValueError(
+                f"Die {label} ist eine Binärdatei (z. B. Outlook-.msg) und kann nicht "
+                f"sicher anonymisiert werden.{hint}"
+            )
+
     def process(self, esol_text: str = "", email_text: str = "") -> AnonymizationResult:
         """Run complete anonymization pipeline across ESOL file and Email."""
+        self.reject_binary(esol_text, "ESOL-Datei")
+        self.reject_binary(email_text, "E-Mail")
         result = AnonymizationResult(
             original_esol=esol_text,
             original_email=email_text,

@@ -61,6 +61,7 @@ def build():
         f"--workpath={build_dir}",
         f"--paths={src_dir}",
         "--noconfirm",
+        "--icon=./assets/py-seudo.ico"
     ]
 
     for mod in excluded_modules:

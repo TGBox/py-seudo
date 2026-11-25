@@ -17,7 +17,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from py_seudo.translation.api_client import check_api_connection
+from py_seudo.translation import secret_store
+from py_seudo.translation.api_client import (
+    check_api_connection,
+    cloud_disabled,
+    validate_base_url,
+    validate_model,
+)
 from py_seudo.translation.models import TranslationProvider, TranslationSettings
 from py_seudo.translation.settings_manager import SettingsManager
 
@@ -43,6 +49,21 @@ class ApiSettingsDialog(QDialog):
         )
         info_label.setObjectName("MutedLabel")
         layout.addWidget(info_label)
+
+        if cloud_disabled():
+            policy_label = QLabel(
+                "⚠️ Externe KI-Anbieter sind auf diesem Rechner per Richtlinie deaktiviert "
+                "(PY_SEUDO_DISABLE_CLOUD). Einstellungen werden gespeichert, aber nicht verwendet."
+            )
+            policy_label.setWordWrap(True)
+            layout.addWidget(policy_label)
+        if not secret_store.is_secure():
+            storage_label = QLabel(
+                "⚠️ Auf diesem System können API-Schlüssel nicht verschlüsselt gespeichert "
+                "werden. Verwenden Sie besser Umgebungsvariablen (OPENAI_API_KEY usw.)."
+            )
+            storage_label.setWordWrap(True)
+            layout.addWidget(storage_label)
 
         self.tab_widget = QTabWidget()
 
@@ -77,7 +98,9 @@ class ApiSettingsDialog(QDialog):
         self.openai_model_edit.setPlaceholderText("gpt-4o-mini")
 
         self.openai_base_url_edit = QLineEdit(self.settings.openai_base_url)
-        self.openai_base_url_edit.setPlaceholderText("Standard: https://api.openai.com/v1 (oder z. B. http://localhost:11434/v1)")
+        self.openai_base_url_edit.setPlaceholderText(
+            "Standard: https://api.openai.com/v1 – http:// nur für localhost (z. B. Ollama)"
+        )
 
         openai_layout.addRow("API-Schlüssel:", openai_key_row)
         openai_layout.addRow("Modell:", self.openai_model_edit)
@@ -219,6 +242,14 @@ class ApiSettingsDialog(QDialog):
 
     def _save(self) -> None:
         updated = self._get_current_draft_settings()
+        try:
+            if updated.openai_base_url:
+                validate_base_url(updated.openai_base_url)
+            for model in (updated.openai_model, updated.gemini_model, updated.claude_model):
+                validate_model(model)
+        except ValueError as e:
+            QMessageBox.warning(self, "Ungültige Eingabe", str(e))
+            return
         SettingsManager.save_settings(updated)
         self.settings = updated
         self.accept()
