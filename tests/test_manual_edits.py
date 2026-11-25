@@ -256,7 +256,7 @@ def test_audit_export_reflects_manual_edits(tmp_path: Path):
 def test_export_blocked_while_suspicions_open(qapp, tmp_path: Path):
     """Offene Verdachtsfaelle sperren den Export hart -- es wird nichts geschrieben."""
     window = MainWindow()
-    window.email_box.set_direct_text("mail.txt", "Patient KVNR A111111111\n")
+    window.email_box.set_direct_text("mail.txt", "IK 123456789\n")
     window._run_anonymization()
     assert window.current_result.suspicions
 
