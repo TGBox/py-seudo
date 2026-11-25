@@ -107,6 +107,10 @@ def test_mainwindow_english_integration(qtbot, tmp_path):
     assert win.english_tab.get_report_text() != ""
     assert "SECTION 1:" in win.english_tab.get_report_text()
 
+    # Offene Verdachtsfaelle sperren den Export -- fuer diesen Test freigeben.
+    win.acknowledge_suspicions([s.text for s in win.current_result.suspicions])
+    assert win.current_result.suspicions == []
+
     # Test save flow writes english report file
     with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory", return_value=str(tmp_path)), \
          patch.object(QMessageBox, "information") as mock_info, \

@@ -194,6 +194,10 @@ def test_direct_preview_pane_editing_and_save(qapp, tmp_path: Path):
     assert "MANUELLE_ESOL_AENDERUNG_ZEILE" in window.esol_diff.get_anonymized_text()
     assert "MANUELLE_EMAIL_AENDERUNG_ZEILE" in window.email_diff.get_anonymized_text()
 
+    # Offene Verdachtsfaelle der Demo-Daten sperren den Export -- freigeben.
+    window.refresh_after_change()
+    window.acknowledge_suspicions([s.text for s in window.current_result.suspicions])
+
     # Save to disk using mocked directory picker
     with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory", return_value=str(tmp_path)), \
          patch("PySide6.QtWidgets.QMessageBox.information"):
@@ -247,3 +251,34 @@ def test_audit_export_reflects_manual_edits(tmp_path: Path):
         idx = header.index("ManuellGeaendert")
         assert rows[1][idx] == "Nein"
         assert rows[2][idx] == "Ja"
+
+
+def test_export_blocked_while_suspicions_open(qapp, tmp_path: Path):
+    """Offene Verdachtsfaelle sperren den Export hart -- es wird nichts geschrieben."""
+    window = MainWindow()
+    window.email_box.set_direct_text("mail.txt", "Patient KVNR A111111111\n")
+    window._run_anonymization()
+    assert window.current_result.suspicions
+
+    with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory", return_value=str(tmp_path)) as picker, \
+         patch("PySide6.QtWidgets.QMessageBox.exec") as box_exec:
+        window._save_anonymized_files()
+        box_exec.assert_called_once()
+        picker.assert_not_called()
+    assert list(tmp_path.glob("*")) == []
+
+
+def test_mapping_added_refreshes_english_report(qapp):
+    """Eine nachtraegliche Ersetzung muss auch im englischen Report ankommen."""
+    window = MainWindow()
+    window.email_box.set_direct_text(
+        "mail.txt", "Sehr geehrte Damen und Herren,\nAnschrift Ringweg 3, 50667 Koeln\n"
+    )
+    window._run_anonymization()
+    assert "Ringweg 3" in window.english_tab.get_report_text()
+
+    window._on_mapping_added(
+        MappingEntry("Ringweg 3", "Musterweg 1", ReplacementCategory.ADDRESS, is_manual=True)
+    )
+    assert "Ringweg 3" not in window.english_tab.get_report_text()
+    assert "Musterweg 1" in window.english_tab.get_report_text()

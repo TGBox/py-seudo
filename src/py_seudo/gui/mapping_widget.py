@@ -1,8 +1,9 @@
 """Interactive mapping table and audit inspection widget with GDPR security safeguards."""
 from __future__ import annotations
 
+import html
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
@@ -17,6 +18,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListView,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -26,17 +29,20 @@ from PySide6.QtWidgets import (
 )
 
 from py_seudo.engine import PseudoEngine
-from py_seudo.models import AnonymizationResult, MappingEntry, ReplacementCategory
+from py_seudo.models import AnonymizationResult, MappingEntry, ReplacementCategory, Suspicion
 
 
 class AddMappingDialog(QDialog):
     """Dialog to manually add a custom replacement rule."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, original: str = ""):
         super().__init__(parent)
         self.setWindowTitle("➕ Neue Ersetzung manuell hinzufügen")
         self.setMinimumWidth(420)
         self._init_ui()
+        if original:
+            self.orig_edit.setText(original)
+            self.pseudo_edit.setFocus()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -112,11 +118,107 @@ class AddMappingDialog(QDialog):
         )
 
 
+class SuspicionReviewDialog(QDialog):
+    """Verdachtsfaelle einzeln pruefen: ersetzen oder ausdruecklich freigeben.
+
+    Es gibt bewusst keinen Knopf "alle freigeben". Jede Stelle muss einzeln
+    angehakt werden, damit die Freigabe eine Entscheidung ist und kein Reflex.
+    """
+
+    ACTION_ACKNOWLEDGE = "acknowledge"
+    ACTION_REPLACE = "replace"
+
+    def __init__(self, suspicions: List[Suspicion], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("🔎 Verdachtsfälle prüfen")
+        self.setMinimumSize(640, 420)
+        self.action: Optional[str] = None
+        self.selected_texts: List[str] = []
+        self._init_ui(suspicions)
+
+    def _init_ui(self, suspicions: List[Suspicion]) -> None:
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        info = QLabel(
+            "Diese Stellen sehen nach Personenbezug aus und stehen noch im Output.\n\n"
+            "• Echte Personen- oder Praxisdaten: einzeln markieren und „Ersetzen…“ wählen.\n"
+            "• Unkritisch (z. B. Kassen-IK, technische Nummer): anhaken und freigeben.\n\n"
+            "Solange eine Stelle offen ist, bleiben Export und KI-Versand gesperrt."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        self.list_widget = QListWidget()
+        for s in suspicions:
+            item = QListWidgetItem(f"Zeile {s.line}:  {s.text}   —   {s.reason}")
+            item.setData(Qt.ItemDataRole.UserRole, s.text)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self.list_widget.addItem(item)
+        self.list_widget.itemChanged.connect(self._update_buttons)
+        layout.addWidget(self.list_widget, 1)
+
+        buttons = QHBoxLayout()
+        self.replace_btn = QPushButton("➕ Ersetzen…")
+        self.replace_btn.setToolTip("Genau eine Stelle anhaken, um sie durch ein Pseudonym zu ersetzen")
+        self.replace_btn.clicked.connect(self._on_replace)
+        self.ack_btn = QPushButton("✓ Angehakte als unkritisch freigeben")
+        self.ack_btn.clicked.connect(self._on_acknowledge)
+        close_btn = QPushButton("Schließen")
+        close_btn.clicked.connect(self.reject)
+        buttons.addWidget(self.replace_btn)
+        buttons.addStretch()
+        buttons.addWidget(self.ack_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+        self._update_buttons()
+
+    def _checked_texts(self) -> List[str]:
+        texts = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                texts.append(str(item.data(Qt.ItemDataRole.UserRole)))
+        return texts
+
+    def _update_buttons(self, *_args) -> None:
+        checked = self._checked_texts()
+        self.replace_btn.setEnabled(len(checked) == 1)
+        self.ack_btn.setEnabled(len(checked) > 0)
+
+    def _on_replace(self) -> None:
+        self.action = self.ACTION_REPLACE
+        self.selected_texts = self._checked_texts()
+        self.accept()
+
+    def _on_acknowledge(self) -> None:
+        texts = self._checked_texts()
+        reply = QMessageBox.question(
+            self,
+            "Freigabe bestätigen",
+            f"{len(texts)} Stelle(n) als unkritisch freigeben?\n\n"
+            "Diese Werte werden danach unverändert exportiert und dürfen an "
+            "externe Dienste übermittelt werden.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.action = self.ACTION_ACKNOWLEDGE
+        self.selected_texts = texts
+        self.accept()
+
+    def get_decision(self) -> Tuple[Optional[str], List[str]]:
+        return self.action, self.selected_texts
+
+
 class MappingWidget(QWidget):
     """Table widget showing all detected entities, originals, and pseudonyms."""
 
     mapping_updated = Signal(str, str, str)  # (original, old_pseudo, new_pseudo)
     mapping_added = Signal(object)           # (MappingEntry)
+    suspicions_acknowledged = Signal(list)   # (List[str]) ausdruecklich freigegebene Texte
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -149,7 +251,7 @@ class MappingWidget(QWidget):
 
         self.add_btn = QPushButton("➕ Neue Ersetzung...")
         self.add_btn.setToolTip("Übersehene sensible Stelle manuell zur Ersetzungstabelle hinzufügen")
-        self.add_btn.clicked.connect(self._open_add_mapping_dialog)
+        self.add_btn.clicked.connect(lambda: self._open_add_mapping_dialog())
         self.add_btn.setEnabled(False)
 
         self.export_btn = QPushButton("🛡️ Mapping-Tabelle exportieren (Audit)...")
@@ -179,6 +281,15 @@ class MappingWidget(QWidget):
         self.suspicion_banner.hide()
         layout.addWidget(self.suspicion_banner)
 
+        review_row = QHBoxLayout()
+        self.review_btn = QPushButton("🔎 Verdachtsfälle prüfen…")
+        self.review_btn.setToolTip("Offene Stellen einzeln ersetzen oder als unkritisch freigeben")
+        self.review_btn.clicked.connect(lambda: self.open_suspicion_review())
+        self.review_btn.hide()
+        review_row.addWidget(self.review_btn)
+        review_row.addStretch()
+        layout.addLayout(review_row)
+
         # Table
         self.table = QTableWidget()
         self.table.setColumnCount(6)
@@ -202,11 +313,24 @@ class MappingWidget(QWidget):
 
         layout.addWidget(self.table)
 
-    def _open_add_mapping_dialog(self) -> None:
-        dlg = AddMappingDialog(self)
+    def _open_add_mapping_dialog(self, original: str = "") -> None:
+        dlg = AddMappingDialog(self, original=original)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             entry = dlg.get_entry()
             self.mapping_added.emit(entry)
+
+    def open_suspicion_review(self) -> None:
+        """Dialog zum Abarbeiten der offenen Verdachtsfaelle."""
+        if not self.current_result or not self.current_result.suspicions:
+            return
+        dlg = SuspicionReviewDialog(list(self.current_result.suspicions), self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        action, texts = dlg.get_decision()
+        if action == SuspicionReviewDialog.ACTION_REPLACE and texts:
+            self._open_add_mapping_dialog(original=texts[0])
+        elif action == SuspicionReviewDialog.ACTION_ACKNOWLEDGE and texts:
+            self.suspicions_acknowledged.emit(texts)
 
     def set_mappings(self, result: AnonymizationResult) -> None:
         self.current_result = result
@@ -236,10 +360,12 @@ class MappingWidget(QWidget):
         """Restrisiko einblenden -- oder ausblenden, wenn nichts offen ist."""
         if not result.suspicions:
             self.suspicion_banner.hide()
+            self.review_btn.hide()
             return
 
+        # Inhalte stammen aus fremden Dateien -> fuer das Rich-Text-Label escapen.
         zeilen = "<br>".join(
-            f"&nbsp;&nbsp;• Zeile {s.line}: <b>{s.text}</b> &mdash; {s.reason}"
+            f"&nbsp;&nbsp;• Zeile {s.line}: <b>{html.escape(s.text)}</b> &mdash; {html.escape(s.reason)}"
             for s in result.suspicions[:12]
         )
         weitere = ""
@@ -249,9 +375,16 @@ class MappingWidget(QWidget):
         self.suspicion_banner.setText(
             f"⚠️ <b>Restrisiko: {len(result.suspicions)} Stelle(n) konnten nicht sicher "
             f"zugeordnet werden.</b> Bitte pruefen Sie diese von Hand, bevor Sie die "
-            f"Dateien weitergeben:<br>{zeilen}{weitere}"
+            f"Dateien weitergeben. Export und KI-Versand sind gesperrt, bis alle "
+            f"Stellen ersetzt oder freigegeben sind:<br>{zeilen}{weitere}"
         )
         self.suspicion_banner.show()
+        self.review_btn.show()
+
+    def refresh_suspicions(self) -> None:
+        """Nur die Restrisiko-Anzeige aktualisieren (nach recheck)."""
+        if self.current_result is not None:
+            self._show_suspicions(self.current_result)
 
     def _populate_table(self, mappings: List[MappingEntry]) -> None:
         self._is_populating = True

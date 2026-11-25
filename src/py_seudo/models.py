@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 
 class ReplacementCategory(str, Enum):
@@ -87,6 +87,11 @@ class AnonymizationResult:
     kassen_iks: List[str] = field(default_factory=list)
     suspicions: List[Suspicion] = field(default_factory=list)
     english_report: str = ""
+    # Funde der Erkenner (ESOL/E-Mail), unabhaengig von der Abschlusspruefung.
+    # ``suspicions`` wird daraus plus aus py_seudo.verify.recheck() aufgebaut.
+    detector_suspicions: List[Suspicion] = field(default_factory=list)
+    # Vom Anwender ausdruecklich als unkritisch freigegebene Textstellen.
+    acknowledged: Set[str] = field(default_factory=set)
 
     @property
     def total_replacements(self) -> int:

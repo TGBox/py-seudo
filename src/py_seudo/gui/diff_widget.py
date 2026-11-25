@@ -1,6 +1,8 @@
 """Side-by-side synchronized comparison widget with diff highlighting."""
 from __future__ import annotations
 
+from typing import Callable, Optional
+
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
@@ -44,6 +46,8 @@ class DiffWidget(QWidget):
         super().__init__(parent)
         self.title = title
         self._is_updating = False
+        # Wird vom Hauptfenster gesetzt: liefert False, wenn Weitergabe gesperrt ist.
+        self.export_guard: Optional[Callable[[], bool]] = None
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -177,6 +181,8 @@ class DiffWidget(QWidget):
         cursor.endEditBlock()
 
     def _copy_anonymized(self) -> None:
+        if self.export_guard is not None and not self.export_guard():
+            return
         clipboard = QApplication.clipboard()
         if clipboard:
             clipboard.setText(self.right_edit.toPlainText())

@@ -10,6 +10,7 @@ from py_seudo.edifact.anonymizer import EsolAnonymizer
 from py_seudo.email.anonymizer import EmailAnonymizer
 from py_seudo.models import AnonymizationResult, MappingEntry, Suspicion
 from py_seudo.validators import RejectionInspector
+from py_seudo.verify import recheck
 
 
 class PseudoEngine:
@@ -81,10 +82,15 @@ class PseudoEngine:
         # Aggregate unique mappings
         result.mappings = list(shared_mappings.values())
 
+        # Funde der Erkenner festhalten; recheck() baut daraus zusammen mit der
+        # Abschlusspruefung die Liste auf, die Export und KI-Versand sperrt.
+        result.detector_suspicions = list(result.suspicions)
+
         # Generate English developer report (100% offline, local generator)
         from py_seudo.translation.local_generator import LocalReportGenerator
         result.english_report = LocalReportGenerator.generate_report(result)
 
+        recheck(result)
         return result
 
     @staticmethod

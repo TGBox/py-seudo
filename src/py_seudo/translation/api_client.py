@@ -9,6 +9,7 @@ from typing import Dict, Tuple
 from py_seudo.models import AnonymizationResult
 from py_seudo.translation.local_generator import LocalReportGenerator
 from py_seudo.translation.models import TranslationProvider, TranslationSettings
+from py_seudo.verify import UnresolvedSuspicions, _dedupe, prompt_findings
 
 SYSTEM_PROMPT = """You are an expert technical writer and German healthcare billing (§ 302 SGB V) specialist.
 Your task is to generate a clean, professional English developer handover report in text format for foreign software developers.
@@ -199,6 +200,12 @@ def generate_developer_report(result: AnonymizationResult, settings: Translation
     user_prompt = build_user_prompt(result)
     if not user_prompt.strip():
         return LocalReportGenerator.generate_report(result)
+
+    # Nichts an externe Dienste schicken, solange irgendwo ein Verdachtsfall
+    # offen ist oder der Prompt selbst verdaechtige Stellen enthaelt.
+    findings = _dedupe(list(result.suspicions) + prompt_findings(user_prompt, result))
+    if findings:
+        raise UnresolvedSuspicions(findings)
 
     if settings.provider == TranslationProvider.OPENAI:
         return call_openai_api(settings, user_prompt)

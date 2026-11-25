@@ -240,7 +240,10 @@ class LocalReportGenerator:
             f"{sep}",
         ]
 
-        email_to_translate = result.anonymized_email or result.original_email
+        # Niemals auf die Original-E-Mail zurueckfallen: Ist der anonymisierte
+        # Text leer (z. B. weil der Anwender ihn bewusst geleert hat), bleibt
+        # auch dieser Abschnitt leer.
+        email_to_translate = result.anonymized_email or ""
         if not email_to_translate.strip():
             lines.append("(No email text was provided in this processing run.)")
             return "\n".join(lines)

@@ -5,6 +5,7 @@ from py_seudo.models import MappingEntry
 from pathlib import Path
 from typing import Optional
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -27,6 +28,7 @@ from py_seudo.gui.english_tab import EnglishTabWidget
 from py_seudo.gui.mapping_widget import MappingWidget
 from py_seudo.gui.theme import DARK_THEME, LIGHT_THEME
 from py_seudo.models import AnonymizationResult
+from py_seudo.verify import recheck
 from py_seudo.samples import (
     SAMPLE_EMAIL,
     SAMPLE_EMAIL_REJECTION,
@@ -131,6 +133,13 @@ class MainWindow(QMainWindow):
         self.is_dark_mode = True
         self.engine = PseudoEngine()
         self.current_result: Optional[AnonymizationResult] = None
+
+        # Nach manuellen Aenderungen Report und Pruefung nicht bei jedem
+        # Tastendruck neu rechnen, sondern kurz nach der letzten Eingabe.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(400)
+        self._refresh_timer.timeout.connect(self.refresh_after_change)
 
         self.setWindowTitle("py-seudo – DSGVO-Abrechnungsanonymisierung (§ 302 SGB V)")
         self.resize(1200, 800)
@@ -250,6 +259,7 @@ class MainWindow(QMainWindow):
         self.mapping_widget = MappingWidget()
         self.mapping_widget.mapping_updated.connect(self._on_mapping_updated)
         self.mapping_widget.mapping_added.connect(self._on_mapping_added)
+        self.mapping_widget.suspicions_acknowledged.connect(self.acknowledge_suspicions)
         self.tabs.addTab(self.mapping_widget, "🔍 Ersetzungs-Protokoll & Mappings")
 
         # Tab 4: English Developer Report & Translation
@@ -262,6 +272,9 @@ class MainWindow(QMainWindow):
         self.email_diff.text_edited.connect(self._on_email_text_edited)
 
         main_layout.addWidget(self.tabs, 1)
+
+        for widget in (self.esol_diff, self.email_diff, self.english_tab):
+            widget.export_guard = self.ensure_export_allowed
 
         # 5. Status Bar
         self.status_bar = QStatusBar()
@@ -342,8 +355,8 @@ class MainWindow(QMainWindow):
                 # Nicht als Erfolg melden, solange etwas offen ist -- und den
                 # Anwender direkt dorthin schicken, wo die Funde stehen.
                 self.status_bar.showMessage(
-                    f"⚠️ {base} {len(result.suspicions)} Stelle(n) konnten nicht sicher "
-                    f"zugeordnet werden – siehe Reiter 'Ersetzungs-Protokoll'."
+                    f"⚠️ {base} {len(result.suspicions)} Stelle(n) mit möglichem Personenbezug "
+                    f"offen – Export gesperrt, siehe Reiter 'Ersetzungs-Protokoll'."
                 )
                 self.tabs.setCurrentWidget(self.mapping_widget)
             else:
@@ -356,16 +369,56 @@ class MainWindow(QMainWindow):
         if self.current_result:
             self.current_result.anonymized_esol = text
             self.status_bar.showMessage("✏️ ESOL-Abrechnungsdatei manuell im Editor geändert.")
+            self._refresh_timer.start()
 
     def _on_email_text_edited(self, text: str) -> None:
         if self.current_result:
             self.current_result.anonymized_email = text
-            self.status_bar.showMessage("✏️ Rückmeldungsemail manuell im Editor geändert.")
+            self.status_bar.showMessage(
+                "✏️ Rückmeldungsemail manuell geändert – englischer Report wird neu erzeugt."
+            )
+            self._refresh_timer.start()
 
     def _on_english_report_edited(self, text: str) -> None:
         if self.current_result:
             self.current_result.english_report = text
             self.status_bar.showMessage("✏️ Englischer Report manuell im Editor geändert.")
+            # Nur neu pruefen -- den Report hier neu zu erzeugen wuerde die
+            # Eingabe des Anwenders sofort wieder ueberschreiben.
+            self._recheck_only()
+
+    def _recheck_only(self) -> None:
+        if not self.current_result:
+            return
+        recheck(self.current_result)
+        self.mapping_widget.refresh_suspicions()
+
+    def refresh_after_change(self) -> None:
+        """Nach jeder Aenderung an ESOL, E-Mail oder Mappings aufrufen.
+
+        Der englische Report wird lokal neu erzeugt (nie automatisch ueber
+        eine Cloud-API), damit er keine Stellen enthaelt, die in den anderen
+        Reitern bereits korrigiert wurden. Danach laeuft die Abschlusspruefung.
+        """
+        self._refresh_timer.stop()
+        if not self.current_result:
+            return
+        self.current_result.anonymized_esol = self.esol_diff.get_anonymized_text()
+        self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
+        self.english_tab.show_local_report()
+        self._recheck_only()
+
+    def acknowledge_suspicions(self, texts: list) -> None:
+        """Vom Anwender ausdruecklich freigegebene Stellen aus der Sperre nehmen."""
+        if not self.current_result or not texts:
+            return
+        self.current_result.acknowledged.update(str(t) for t in texts)
+        self._recheck_only()
+        offen = len(self.current_result.suspicions)
+        self.status_bar.showMessage(
+            f"✓ {len(texts)} Stelle(n) freigegeben."
+            + (f" Noch {offen} offen." if offen else " Keine offenen Stellen mehr.")
+        )
 
     def _on_mapping_updated(self, original: str, old_pseudo: str, new_pseudo: str) -> None:
         """Propagate updated pseudonym from the mapping table to both preview widgets."""
@@ -378,7 +431,7 @@ class MainWindow(QMainWindow):
         self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
 
         total = c_esol + c_mail
-        self.english_tab.set_result(self.current_result)
+        self.refresh_after_change()
         self.status_bar.showMessage(
             f"✓ Pseudonym manuell geändert: '{old_pseudo}' → '{new_pseudo}' ({total} Vorkommen in Texten aktualisiert)."
         )
@@ -396,36 +449,62 @@ class MainWindow(QMainWindow):
         self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
         self.current_result.mappings.append(entry)
 
+        self.refresh_after_change()
         self.mapping_widget.set_mappings(self.current_result)
-        self.english_tab.set_result(self.current_result)
         self.status_bar.showMessage(
             f"✓ Neue Ersetzung hinzugefügt: '{entry.original}' → '{entry.pseudonym}' ({entry.count} Ersetzungen)."
         )
+
+    def ensure_export_allowed(self) -> bool:
+        """Prueft den aktuellen Stand und sperrt die Weitergabe bei offenen Funden.
+
+        Gilt fuer alle Wege nach draussen: Dateien speichern, Report einzeln
+        exportieren, Zwischenablage-Knoepfe.
+        """
+        if not self.current_result:
+            return False
+        # Ausstehende Aktualisierung sofort ausfuehren und genau den Stand
+        # pruefen, der gleich geschrieben wird -- inklusive englischem Report.
+        if self._refresh_timer.isActive():
+            self.refresh_after_change()
+        self.current_result.anonymized_esol = self.esol_diff.get_anonymized_text()
+        self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
+        self.current_result.english_report = self.english_tab.get_report_text()
+        recheck(self.current_result)
+        self.mapping_widget.refresh_suspicions()
+
+        # Harte Sperre: Solange eine Stelle offen ist, wird nichts geschrieben.
+        # Aufloesen geht nur ueber Ersetzen oder ausdrueckliche Einzelfreigabe.
+        if self.current_result.suspicions:
+            anzahl = len(self.current_result.suspicions)
+            vorschau = "\n".join(
+                f"• Zeile {s.line}: {s.text}" for s in self.current_result.suspicions[:8]
+            )
+            if anzahl > 8:
+                vorschau += f"\n… und {anzahl - 8} weitere"
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Critical)
+            box.setWindowTitle("Export gesperrt")
+            box.setText(
+                f"{anzahl} Stelle(n) mit möglichem Personenbezug sind noch offen. "
+                f"Es wurde nichts gespeichert oder kopiert."
+            )
+            box.setInformativeText(vorschau)
+            review_btn = box.addButton("Verdachtsfälle prüfen…", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(QMessageBox.StandardButton.Close)
+            box.exec()
+            if box.clickedButton() is review_btn:
+                self.tabs.setCurrentWidget(self.mapping_widget)
+                self.mapping_widget.open_suspicion_review()
+            return False
+        return True
 
     def _save_anonymized_files(self) -> None:
         if not self.current_result:
             return
 
-        # Always read latest live text from the preview panes
-        self.current_result.anonymized_esol = self.esol_diff.get_anonymized_text()
-        self.current_result.anonymized_email = self.email_diff.get_anonymized_text()
-
-        # Offene Verdachtsfaelle vor dem Export bestaetigen lassen. Wer die Datei
-        # weitergibt, soll wissen, dass noch etwas ungeklaert ist.
-        if self.current_result.suspicions:
-            anzahl = len(self.current_result.suspicions)
-            reply = QMessageBox.warning(
-                self,
-                "⚠️ Restrisiko vor dem Export",
-                f"An {anzahl} Stelle(n) konnte py-seudo nicht sicher entscheiden, "
-                f"ob ein Personenbezug vorliegt – diese wurden NICHT ersetzt.\n\n"
-                f"Die Liste steht im Reiter 'Ersetzungs-Protokoll & Mappings'.\n\n"
-                f"Trotzdem exportieren?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
+        if not self.ensure_export_allowed():
+            return
 
         target_dir = QFileDialog.getExistingDirectory(
             self, "Zielordner für anonymisierte Dateien auswählen"
@@ -469,7 +548,6 @@ class MainWindow(QMainWindow):
                 saved_files.append(p_mail.name)
 
             # Export English Summary & Translation file if available
-            self.current_result.english_report = self.english_tab.get_report_text()
             if self.current_result.english_report and self.current_result.english_report.strip():
                 if self.esol_box.file_path:
                     base_stem = self.esol_box.file_path.stem

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QGuiApplication
@@ -24,7 +24,9 @@ from py_seudo.gui.api_settings_dialog import ApiSettingsDialog
 from py_seudo.models import AnonymizationResult
 from py_seudo.translation.api_client import generate_developer_report
 from py_seudo.translation.models import TranslationProvider, TranslationSettings
+from py_seudo.translation.local_generator import LocalReportGenerator
 from py_seudo.translation.settings_manager import SettingsManager
+from py_seudo.verify import UnresolvedSuspicions
 
 
 class EnglishTabWidget(QWidget):
@@ -37,6 +39,8 @@ class EnglishTabWidget(QWidget):
         self.settings: TranslationSettings = SettingsManager.load_settings()
         self.current_result: Optional[AnonymizationResult] = None
         self.is_dark_mode = True
+        # Wird vom Hauptfenster gesetzt: liefert False, wenn Weitergabe gesperrt ist.
+        self.export_guard: Optional[Callable[[], bool]] = None
         self._init_ui()
 
     def update_theme(self, is_dark: bool) -> None:
@@ -219,6 +223,24 @@ class EnglishTabWidget(QWidget):
 
         self._update_stats()
 
+    def show_local_report(self) -> None:
+        """Report lokal neu erzeugen, ohne externe Dienste.
+
+        Wird nach jeder Aenderung an ESOL, E-Mail oder Mappings aufgerufen,
+        damit der Report nie einen Stand zeigt, der in den anderen Reitern
+        bereits korrigiert wurde.
+        """
+        if not self.current_result:
+            return
+        report = LocalReportGenerator.generate_report(self.current_result)
+        self.current_result.english_report = report
+        self.editor.blockSignals(True)
+        try:
+            self.editor.setPlainText(report)
+        finally:
+            self.editor.blockSignals(False)
+        self._update_stats()
+
     def regenerate(self) -> None:
         if not self.current_result:
             return
@@ -234,6 +256,15 @@ class EnglishTabWidget(QWidget):
             self.editor.setPlainText(report_text)
             self._update_status_badge()
             self._update_stats()
+        except UnresolvedSuspicions as e:
+            QMessageBox.warning(
+                self,
+                "Versand gesperrt",
+                f"Der Text wurde NICHT an {self.settings.provider.display_name} gesendet.\n\n"
+                f"{e}\n\n"
+                "Bitte die Stellen im Reiter 'Ersetzungs-Protokoll & Mappings' über "
+                "'Verdachtsfälle prüfen…' ersetzen oder freigeben.",
+            )
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -264,6 +295,8 @@ class EnglishTabWidget(QWidget):
         text = self.editor.toPlainText()
         if not text:
             return
+        if self.export_guard is not None and not self.export_guard():
+            return
         clipboard = QGuiApplication.clipboard()
         if clipboard:
             clipboard.setText(text)
@@ -277,6 +310,8 @@ class EnglishTabWidget(QWidget):
         text = self.editor.toPlainText()
         if not text.strip():
             QMessageBox.warning(self, "Kein Inhalt", "Es ist noch kein Report vorhanden.")
+            return
+        if self.export_guard is not None and not self.export_guard():
             return
 
         default_name = "summary_and_email_en.txt"
